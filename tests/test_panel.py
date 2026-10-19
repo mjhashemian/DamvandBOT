@@ -35,20 +35,28 @@ class PanelTests(IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.client.close)
         self.headers = {"Host": "127.0.0.1:8765"}
 
+    async def login_form(self, headers):
+        response = await self.client.get("/login", headers=headers)
+        self.assertEqual(200, response.status)
+        sid = response.cookies[panel.LOGIN_COOKIE].value
+        return {**headers, "Cookie": f"{panel.LOGIN_COOKIE}={sid}"}, panel.LOGIN_CHALLENGES[sid][1]
+
     async def test_auth_csrf_and_plan_edit(self):
         response = await self.client.get("/", headers=self.headers, allow_redirects=False)
         self.assertEqual(303, response.status)
-        response = await self.client.post("/login", headers=self.headers, data={"password": "wrong"}, allow_redirects=False)
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "wrong", "login_csrf": login_csrf}, allow_redirects=False)
         self.assertEqual(200, response.status)
-        response = await self.client.post("/login", headers=self.headers, data={"password": "a-very-long-panel-password"}, allow_redirects=False)
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "a-very-long-panel-password", "login_csrf": login_csrf}, allow_redirects=False)
         self.assertEqual(303, response.status)
         sid = response.cookies[panel.COOKIE].value
         csrf = panel.SESSIONS[sid][1]
         response = await self.client.get("/plans", headers=self.headers)
         self.assertEqual(200, response.status)
-        response = await self.client.post("/plans", headers=self.headers, data={"csrf": "wrong"}, allow_redirects=False)
+        response = await self.client.post("/plans", headers={**self.headers, "Origin": "null"}, data={"csrf": "wrong"}, allow_redirects=False)
         self.assertEqual(403, response.status)
-        response = await self.client.post("/plans", headers=self.headers, allow_redirects=False, data={
+        response = await self.client.post("/plans", headers={**self.headers, "Origin": "null"}, allow_redirects=False, data={
             "csrf": csrf, "code": "gb10", "title_fa": "Test plan", "traffic_gb": "12",
             "duration_days": "45", "toman_price": "123456", "stars_price": "0", "enabled": "0",
         })
@@ -63,7 +71,8 @@ class PanelTests(IsolatedAsyncioTestCase):
         data = management.read_config()
         data["BOT_TOKEN"] = "123456789:" + "A" * 35
         management.write_config(data)
-        response = await self.client.post("/login", headers=self.headers, data={"password": "a-very-long-panel-password"}, allow_redirects=False)
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "a-very-long-panel-password", "login_csrf": login_csrf}, allow_redirects=False)
         self.assertEqual(303, response.status)
         response = await self.client.get("/settings", headers=self.headers)
         self.assertEqual(200, response.status)
@@ -76,14 +85,20 @@ class PanelTests(IsolatedAsyncioTestCase):
             "X-Forwarded-Proto": "https",
             "Origin": "https://bot.example.com:8765",
         }
-        response = await self.client.post("/login", headers=headers, data={"password": "wrong"}, allow_redirects=False)
+        headers, login_csrf = await self.login_form(headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "wrong", "login_csrf": login_csrf}, allow_redirects=False)
         self.assertEqual(200, response.status)
-        response = await self.client.post("/login", headers={**headers, "Origin": "https://attacker.example"}, data={"password": "wrong"}, allow_redirects=False)
+        response = await self.client.post("/login", headers={**headers, "Origin": "https://attacker.example"}, data={"password": "wrong", "login_csrf": login_csrf}, allow_redirects=False)
+        self.assertEqual(403, response.status)
+        response = await self.client.post("/login", headers={**headers, "Origin": "null"}, data={"password": "wrong", "login_csrf": login_csrf}, allow_redirects=False)
+        self.assertEqual(200, response.status)
+        response = await self.client.post("/login", headers={**headers, "Origin": "null"}, data={"password": "wrong"}, allow_redirects=False)
         self.assertEqual(403, response.status)
 
     async def test_first_run_settings_are_entered_in_panel(self):
         management.CONFIG_PATH.unlink()
-        response = await self.client.post("/login", headers=self.headers, data={"password": "a-very-long-panel-password"}, allow_redirects=False)
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "a-very-long-panel-password", "login_csrf": login_csrf}, allow_redirects=False)
         self.assertEqual(303, response.status)
         sid = response.cookies[panel.COOKIE].value
         csrf = panel.SESSIONS[sid][1]

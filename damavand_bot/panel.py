@@ -25,8 +25,11 @@ from .management import (
 )
 
 SESSIONS: dict[str, tuple[float, str]] = {}
+LOGIN_CHALLENGES: dict[str, tuple[float, str]] = {}
 FAILURES: dict[str, list[float]] = {}
 COOKIE = "damavand_panel"
+LOGIN_COOKIE = "damavand_login"
+NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/settings", "/terms"})
 
 
 def esc(value: object) -> str:
@@ -110,7 +113,7 @@ async def guard(request: web.Request, handler):
         raise web.HTTPForbidden(text="Invalid panel host or insecure connection")
     if request.method == "POST":
         origin = request.headers.get("Origin")
-        if origin and origin != f"{request.scheme}://{request.host}":
+        if origin and origin != f"{request.scheme}://{request.host}" and not (origin == "null" and request.path in NULL_ORIGIN_CSRF_PATHS):
             logging.warning(
                 "Rejected panel POST origin=%r expected=%r path=%r",
                 origin[:200], f"{request.scheme}://{request.host}", request.path[:100],
@@ -121,20 +124,36 @@ async def guard(request: web.Request, handler):
 
 async def login(request: web.Request):
     if request.method == "GET":
-        return page("Sign in", '<div class="card"><form method="post"><label>Panel password</label><input type="password" name="password" autocomplete="current-password" required><p><button>Sign in</button></p></form></div>')
+        now = time.monotonic()
+        for sid, (expires, _) in list(LOGIN_CHALLENGES.items()):
+            if expires < now:
+                LOGIN_CHALLENGES.pop(sid, None)
+        if len(LOGIN_CHALLENGES) >= 10000:
+            LOGIN_CHALLENGES.clear()
+        sid, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        LOGIN_CHALLENGES[sid] = (now + 600, csrf)
+        response = page("Sign in", f'<div class="card"><form method="post"><input type="hidden" name="login_csrf" value="{esc(csrf)}"><label>Panel password</label><input type="password" name="password" autocomplete="current-password" required><p><button>Sign in</button></p></form></div>')
+        response.set_cookie(LOGIN_COOKIE, sid, httponly=True, secure=request.secure, samesite="Strict", path="/login", max_age=600)
+        return response
     now = time.monotonic()
     client_ip = request.headers.get("X-Real-IP", "") if request.remote == "127.0.0.1" and request.headers.get("X-Forwarded-Proto") == "https" else request.remote or "unknown"
     attempts = FAILURES[client_ip] = [at for at in FAILURES.get(client_ip, []) if now - at < 900]
     if len(attempts) >= 10:
         raise web.HTTPTooManyRequests(text="Too many sign-in attempts. Try again later.")
     data = await request.post()
+    sid = request.cookies.get(LOGIN_COOKIE, "")
+    challenge = LOGIN_CHALLENGES.get(sid)
+    if not challenge or challenge[0] < now or not secrets.compare_digest(str(data.get("login_csrf", "")), challenge[1]):
+        raise web.HTTPForbidden(text="Invalid login form; refresh the sign-in page and try again")
     if not verify_panel_password(str(data.get("password", ""))):
         attempts.append(now)
         return page("Sign in", '<p class="error">Invalid password.</p><p><a href="/login">Try again</a></p>')
+    LOGIN_CHALLENGES.pop(sid, None)
     FAILURES.pop(client_ip, None)
     sid, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     SESSIONS[sid] = (now + 8 * 3600, csrf)
     response = web.HTTPSeeOther("/")
+    response.del_cookie(LOGIN_COOKIE, path="/login")
     response.set_cookie(COOKIE, sid, httponly=True, secure=request.secure, samesite="Strict", path="/", max_age=8 * 3600)
     raise response
 
