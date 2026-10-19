@@ -24,6 +24,8 @@ class Config:
     bot_token: str
     admin_ids: frozenset[int]
     channel_username: str
+    channel_id: str
+    channel_join_url: str
     support_username: str
     db_path: Path
     terms_file: Path
@@ -38,6 +40,9 @@ class Config:
     card_payment_card_number: str
     card_payment_holder: str
     card_payment_instructions: str
+    trial_enabled: bool
+    trial_mb: int
+    trial_days: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -64,8 +69,10 @@ class Config:
         return cls(
             bot_token=_required("BOT_TOKEN"),
             admin_ids=admin_ids,
-            channel_username=os.getenv("CHANNEL_USERNAME", "@damavandvpn_vip").strip(),
-            support_username=os.getenv("SUPPORT_USERNAME", "@damavand_sup").strip(),
+            channel_username=os.getenv("CHANNEL_USERNAME", "").strip(),
+            channel_id=os.getenv("CHANNEL_ID", "").strip(),
+            channel_join_url=os.getenv("CHANNEL_JOIN_URL", "").strip(),
+            support_username=os.getenv("SUPPORT_USERNAME", "").strip(),
             db_path=Path(os.getenv("DB_PATH", "/var/lib/damavand-vpn-bot/bot.db")),
             terms_file=Path(os.getenv("TERMS_FILE", "/etc/damavand-vpn-bot/terms-fa.txt")),
             terms_version=os.getenv("TERMS_VERSION", "1").strip(),
@@ -79,11 +86,14 @@ class Config:
             card_payment_card_number=card_payment_card_number,
             card_payment_holder=card_payment_holder,
             card_payment_instructions=os.getenv("CARD_PAYMENT_INSTRUCTIONS", "").strip(),
+            trial_enabled=_bool("TRIAL_ENABLED", True),
+            trial_mb=int(os.getenv("TRIAL_MB", "500")),
+            trial_days=int(os.getenv("TRIAL_DAYS", "1")),
         )
 
     @property
     def channel_url(self) -> str:
-        return f"https://t.me/{self.channel_username.lstrip('@')}"
+        return self.channel_join_url or f"https://t.me/{self.channel_username.lstrip('@')}"
 
     @property
     def support_url(self) -> str:

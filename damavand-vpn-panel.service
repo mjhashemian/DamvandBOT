@@ -1,0 +1,24 @@
+[Unit]
+Description=Damavand Bot local management panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=damavand-bot
+Group=damavand-bot
+WorkingDirectory=/opt/damavand-vpn-bot
+ExecStart=/opt/damavand-vpn-bot/.venv/bin/python -m damavand_bot.launch panel
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/damavand-vpn-bot /var/lib/damavand-vpn-bot
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

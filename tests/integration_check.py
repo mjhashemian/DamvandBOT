@@ -14,9 +14,10 @@ async def main() -> None:
     bot = Bot(config.bot_token)
     try:
         me = await bot.get_me()
-        channel = await bot.get_chat(config.channel_username)
+        channel_ref = int(config.channel_id) if config.channel_id else config.channel_username
+        channel = await bot.get_chat(channel_ref)
         try:
-            admin_member = await bot.get_chat_member(config.channel_username, 306525404)
+            admin_member = await bot.get_chat_member(channel_ref, next(iter(config.admin_ids)))
             admin_status = admin_member.status
         except TelegramBadRequest as exc:
             admin_status = f"unavailable ({exc.message})"

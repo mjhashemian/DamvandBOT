@@ -4,6 +4,7 @@ import asyncio
 import html
 import io
 import logging
+import os
 import re
 from datetime import datetime, timezone
 
@@ -73,7 +74,7 @@ BUY_INTRO = (
     "همه سرویس‌ها دارای آی‌پی ثابت هستن که برای ترید، سرویس‌های برنامه‌نویسی، "
     "هوش مصنوعی و وب‌گردی کاملاً مناسب هستن و توی این سرویس‌ها امنیت شما "
     "دارای اهمیت ویژه‌ای است.\n\n"
-    "مدت اعتبار همهٔ پلن‌ها ۳۱ روز و محدودیت دستگاه ندارند."
+    "مدت اعتبار و حجم هر پلن در فهرست پلن‌ها مشخص شده است."
 )
 
 
@@ -107,7 +108,8 @@ class App:
         if self.is_admin(user_id):
             return True
         try:
-            member = await self.bot.get_chat_member(self.config.channel_username, user_id)
+            chat_id = int(self.config.channel_id) if self.config.channel_id else self.config.channel_username
+            member = await self.bot.get_chat_member(chat_id, user_id)
         except TelegramBadRequest as exc:
             logger.exception("Channel membership check failed")
             raise ChannelMembershipUnavailable from exc
@@ -256,6 +258,7 @@ async def _begin_checkout(
             f"شماره کارت: <code>{html.escape(app.config.card_payment_card_number)}</code>\n"
             f"به نام: <b>{html.escape(app.config.card_payment_holder)}</b>\n\n"
             f"پلن انتخابی: <b>{html.escape(plan_title)}</b> برای {verb}\n\n"
+            f"{html.escape(app.config.card_payment_instructions) + chr(10) + chr(10) if app.config.card_payment_instructions else ''}"
             "بعد از انجام تراکنش دکمهٔ <b>ارسال رسید پرداخت</b> رو لمس کنید و "
             "عکس رسیدتون رو برامون بفرستید.\n\n"
             "لطفا پیش از تأیید انتقال، حتما نام صاحب کارت رو چک کنید؛ "
@@ -881,18 +884,21 @@ async def trial(message: Message) -> None:
     app = _app(message)
     if not await app.gate(message):
         return
+    if not app.config.trial_enabled:
+        await message.answer("سرویس تست در حال حاضر غیرفعال است.")
+        return
     period = datetime.now(timezone.utc).strftime("%Y-%m")
     email = f"tg{message.from_user.id}-test-{period.replace('-', '')}"
     if not await app.db.claim_trial(message.from_user.id, period, email):
         await message.answer("سرویس تست این ماهت رو قبلاً دریافت کردی. ماه بعد دوباره می‌تونی تست بگیری.")
         return
-    await message.answer("⏳ در حال ساخت سرویس تست ۵۰۰ مگابایتی یک‌روزه…")
+    await message.answer(f"⏳ در حال ساخت سرویس تست {app.config.trial_mb} مگابایتی {app.config.trial_days} روزه…")
     try:
         envelope = await app.xui.create_client(
             email=email,
             telegram_id=message.from_user.id,
-            traffic_bytes=500 * 1024**2,
-            duration_days=1,
+            traffic_bytes=app.config.trial_mb * 1024**2,
+            duration_days=app.config.trial_days,
             comment=f"Monthly Telegram trial {period}",
         )
         await app.db.complete_trial(message.from_user.id, period, email)
@@ -1021,7 +1027,7 @@ async def support(message: Message) -> None:
 async def channel(message: Message) -> None:
     app = _app(message)
     await message.answer(
-        f"کانال رسمی دماوند VPN:\n{app.config.channel_username}",
+        f"کانال رسمی دماوند VPN:\n{app.config.channel_username or app.config.channel_url}",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="مشاهده کانال", url=app.config.channel_url)]
@@ -1238,14 +1244,23 @@ async def run() -> None:
     config = Config.from_env()
     db = Database(config.db_path)
     await db.initialize()
-    bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    async with XUIClient(config) as xui:
-        app = App(config, bot, db, xui)
-        runtime_app = app
-        dispatcher = Dispatcher()
-        dispatcher.include_router(router)
-        await bot.delete_webhook(drop_pending_updates=False)
-        await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
+    pid_file = config.db_path.parent / "bot.pid"
+    pid_file.write_text(str(os.getpid()), encoding="ascii")
+    try:
+        bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        async with XUIClient(config) as xui:
+            app = App(config, bot, db, xui)
+            runtime_app = app
+            dispatcher = Dispatcher()
+            dispatcher.include_router(router)
+            await bot.delete_webhook(drop_pending_updates=False)
+            await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
+    finally:
+        try:
+            if pid_file.read_text(encoding="ascii").strip() == str(os.getpid()):
+                pid_file.unlink(missing_ok=True)
+        except FileNotFoundError:
+            pass
 
 
 def main() -> None:

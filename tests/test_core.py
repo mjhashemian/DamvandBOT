@@ -24,6 +24,15 @@ class DatabaseTests(IsolatedAsyncioTestCase):
         self.assertTrue(all(p.stars_price == 0 for p in plans))
         self.assertEqual(150_000, plans[1].toman_price)
 
+    async def test_plan_edits_survive_bot_database_initialization(self):
+        async with self.db.connect() as db:
+            await db.execute("UPDATE plans SET toman_price=123456,enabled=0 WHERE code='gb10'")
+            await db.commit()
+        await self.db.initialize()
+        async with self.db.connect() as db:
+            row = await (await db.execute("SELECT toman_price,enabled FROM plans WHERE code='gb10'")).fetchone()
+        self.assertEqual((123456, 0), tuple(row))
+
     async def test_payment_claim_is_idempotent(self):
         await self.db.set_stars_price(10, 100)
         plan = await self.db.get_plan("gb10")

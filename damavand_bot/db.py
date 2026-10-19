@@ -171,11 +171,7 @@ class Database:
                 """
                 INSERT INTO plans(code,title_fa,traffic_gb,duration_days,toman_price)
                 VALUES(?,?,?,?,?)
-                ON CONFLICT(code) DO UPDATE SET
-                  title_fa=excluded.title_fa,
-                  traffic_gb=excluded.traffic_gb,
-                  duration_days=excluded.duration_days,
-                  toman_price=excluded.toman_price
+                ON CONFLICT(code) DO NOTHING
                 """,
                 DEFAULT_PLANS,
             )

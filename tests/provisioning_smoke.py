@@ -15,7 +15,7 @@ async def main() -> None:
         try:
             envelope = await xui.create_client(
                 email=email,
-                telegram_id=306525404,
+                telegram_id=next(iter(config.admin_ids)),
                 traffic_bytes=1024 * 1024,
                 duration_days=1,
                 comment="Damavand bot provisioning smoke test - delete immediately",

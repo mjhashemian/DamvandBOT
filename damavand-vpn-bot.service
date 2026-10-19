@@ -1,6 +1,6 @@
 [Unit]
 Description=Damavand VPN Telegram Bot
-After=network-online.target x-ui.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -8,9 +8,8 @@ Type=simple
 User=damavand-bot
 Group=damavand-bot
 WorkingDirectory=/opt/damavand-vpn-bot
-EnvironmentFile=/etc/damavand-vpn-bot/bot.env
-ExecStart=/opt/damavand-vpn-bot/.venv/bin/python -m damavand_bot
-Restart=on-failure
+ExecStart=/opt/damavand-vpn-bot/.venv/bin/python -m damavand_bot.launch bot
+Restart=always
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
