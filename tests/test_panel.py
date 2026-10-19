@@ -21,7 +21,8 @@ class PanelTests(IsolatedAsyncioTestCase):
         self.defaults_patch = patch.object(management, "DEFAULTS", {**management.DEFAULTS, "DB_PATH": str(root / "bot.db"), "TERMS_FILE": str(root / "terms-fa.txt")})
         self.auth_patch = patch.object(management, "AUTH_PATH", root / "panel-auth.json")
         self.panel_auth_patch = patch.object(panel, "AUTH_PATH", root / "panel-auth.json")
-        for item in (self.config_patch, self.panel_config_patch, self.defaults_patch, self.auth_patch, self.panel_auth_patch):
+        self.panel_domain_patch = patch.object(panel, "PANEL_DOMAIN_PATH", root / "panel-domain")
+        for item in (self.config_patch, self.panel_config_patch, self.defaults_patch, self.auth_patch, self.panel_auth_patch, self.panel_domain_patch):
             item.start()
             self.addCleanup(item.stop)
         data = dict(management.DEFAULTS)
@@ -67,6 +68,18 @@ class PanelTests(IsolatedAsyncioTestCase):
         response = await self.client.get("/settings", headers=self.headers)
         self.assertEqual(200, response.status)
         self.assertNotIn(data["BOT_TOKEN"], await response.text())
+
+    async def test_public_https_origin_is_checked(self):
+        panel.PANEL_DOMAIN_PATH.write_text("bot.example.com", encoding="ascii")
+        headers = {
+            "Host": "bot.example.com:8765",
+            "X-Forwarded-Proto": "https",
+            "Origin": "https://bot.example.com:8765",
+        }
+        response = await self.client.post("/login", headers=headers, data={"password": "wrong"}, allow_redirects=False)
+        self.assertEqual(200, response.status)
+        response = await self.client.post("/login", headers={**headers, "Origin": "https://attacker.example"}, data={"password": "wrong"}, allow_redirects=False)
+        self.assertEqual(403, response.status)
 
     async def test_first_run_settings_are_entered_in_panel(self):
         management.CONFIG_PATH.unlink()
