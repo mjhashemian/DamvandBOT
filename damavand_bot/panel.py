@@ -13,8 +13,9 @@ import signal
 import sqlite3
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from aiohttp import web
 
@@ -29,7 +30,22 @@ LOGIN_CHALLENGES: dict[str, tuple[float, str]] = {}
 FAILURES: dict[str, list[float]] = {}
 COOKIE = "damavand_panel"
 LOGIN_COOKIE = "damavand_login"
-NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/settings", "/terms"})
+NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/terms"})
+SETTING_GROUPS = (
+    ("Bot settings", ("BOT_TOKEN", "ADMIN_IDS", "SUPPORT_USERNAME", "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE")),
+    ("Channel settings", ("CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL")),
+    ("Payment settings", ("CARD_PAYMENT_ENABLED", "CARD_PAYMENT_CARD_NUMBER", "CARD_PAYMENT_HOLDER", "CARD_PAYMENT_INSTRUCTIONS")),
+    ("Trial settings", ("TRIAL_ENABLED", "TRIAL_MB", "TRIAL_DAYS")),
+)
+SETTING_LABELS = {
+    "BOT_TOKEN": "Bot Token", "ADMIN_IDS": "Admin Telegram IDs", "SUPPORT_USERNAME": "Support username",
+    "XUI_BASE_URL": "3x-ui panel URL", "XUI_API_TOKEN": "3x-ui API token",
+    "XUI_SUBSCRIPTION_BASE": "Subscription base URL", "CHANNEL_USERNAME": "Channel username",
+    "CHANNEL_ID": "Channel ID", "CHANNEL_JOIN_URL": "Channel join link",
+    "CARD_PAYMENT_ENABLED": "Card-to-card payment", "CARD_PAYMENT_CARD_NUMBER": "Card number",
+    "CARD_PAYMENT_HOLDER": "Cardholder name", "CARD_PAYMENT_INSTRUCTIONS": "Payment instructions",
+    "TRIAL_ENABLED": "Free trial", "TRIAL_MB": "Trial traffic (MB)", "TRIAL_DAYS": "Trial duration (days)",
+}
 
 
 def esc(value: object) -> str:
@@ -57,32 +73,16 @@ def audit(db: sqlite3.Connection, event: str, details: dict) -> None:
 
 
 def page(title: str, content: str, csrf: str = "", message: str = "") -> web.Response:
-    nav = "".join(
-        f'<a href="{href}">{label}</a>' for href, label in (
-            ("/", "Overview"), ("/users", "Users"), ("/orders", "Orders"),
-            ("/plans", "Plans"), ("/discounts", "Discounts"),
-            ("/settings", "Settings"), ("/terms", "Terms"), ("/audit", "Audit"),
-        )
-    ) if csrf else ""
-    logout = f'<form method="post" action="/logout"><input type="hidden" name="csrf" value="{esc(csrf)}"><button>Sign out</button></form>' if csrf else ""
+    sidebar = f'<div id="panel-sidebar" data-csrf="{esc(csrf)}"></div>' if csrf else ""
+    body_class = "app" if csrf else "login"
     body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Damavand Bot</title>
-<style>
-:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;font:15px system-ui;background:#0c1424;color:#e5edf7}}
-header{{background:#14213a;padding:16px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}}
-header b{{font-size:19px}}nav{{display:flex;gap:12px;flex-wrap:wrap}}a{{color:#93c5fd;text-decoration:none}}a:hover{{text-decoration:underline}}
-main{{max-width:1180px;margin:28px auto;padding:0 18px}}.card{{background:#17263e;border:1px solid #30435f;border-radius:12px;padding:20px;margin:16px 0}}
-h1{{font-size:25px}}h2{{font-size:19px}}label{{display:block;margin:12px 0 5px}}input,textarea,select{{background:#0d1a2d;border:1px solid #526782;color:#f8fafc;border-radius:7px;padding:9px;width:100%;max-width:640px;font:inherit}}
-textarea{{min-height:160px}}button{{background:#2563eb;color:white;border:0;border-radius:7px;padding:9px 15px;cursor:pointer;font:inherit}}button.danger{{background:#b91c1c}}
-table{{border-collapse:collapse;width:100%;overflow-wrap:anywhere}}th,td{{border-bottom:1px solid #344762;text-align:left;padding:9px}}.scroll{{overflow:auto}}
-.muted{{color:#a5b4c7}}.notice{{background:#1b4332;border-radius:8px;padding:12px}}.error{{background:#6d2020;border-radius:8px;padding:12px}}.row{{display:flex;gap:12px;flex-wrap:wrap;align-items:end}}
-.row>label{{flex:1 1 150px}}code{{font-size:13px}}small{{color:#afbdd0}}
-</style></head><body><header><b>Damavand Bot</b><nav>{nav}</nav>{logout}</header>
-<main><h1>{esc(title)}</h1>{f'<p class="notice">{esc(message)}</p>' if message else ''}{content}</main></body></html>"""
+<link rel="stylesheet" href="/static/panel.css"><script defer src="/static/panel.js"></script></head>
+<body class="{body_class}">{sidebar}<main><h1>{esc(title)}</h1>{f'<p class="notice">{esc(message)}</p>' if message else ''}{content}</main></body></html>"""
     return web.Response(text=body, content_type="text/html", headers={
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     })
 
 
@@ -177,7 +177,7 @@ async def overview(request: web.Request):
         recent = db.execute("SELECT id,telegram_id,kind,toman_amount,status,created_at FROM orders ORDER BY id DESC LIMIT 12").fetchall()
     cards = "".join(f'<div class="card"><h2>{esc(label)}</h2><strong>{value}</strong></div>' for label, value in (*counts.items(), ("Receipts awaiting review", pending)))
     rows = "".join(f"<tr><td>{r['id']}</td><td>{r['telegram_id']}</td><td>{esc(r['kind'])}</td><td>{r['toman_amount']:,}</td><td>{esc(r['status'])}</td><td>{esc(r['created_at'])}</td></tr>" for r in recent)
-    return page("Overview", f'<p class="muted">Local-only panel. Payment receipts must be verified against your bank account before approval in Telegram.</p><div class="row">{cards}</div><div class="card scroll"><h2>Recent orders</h2><table><tr><th>ID</th><th>User</th><th>Kind</th><th>Toman</th><th>Status</th><th>Created</th></tr>{rows}</table></div>', csrf)
+    return page("Overview", f'<p class="muted">Payment receipts must be verified against your bank account before approval in Telegram.</p><div class="row">{cards}</div><div class="card scroll"><h2>Recent orders</h2><table><tr><th>ID</th><th>User</th><th>Kind</th><th>Toman</th><th>Status</th><th>Created</th></tr>{rows}</table></div>', csrf)
 
 
 async def users(request: web.Request):
@@ -186,6 +186,89 @@ async def users(request: web.Request):
         rows = db.execute("SELECT telegram_id,username,full_name,terms_version,created_at FROM users ORDER BY updated_at DESC LIMIT 200").fetchall()
     body = "".join(f"<tr><td>{r['telegram_id']}</td><td>{esc(r['username'])}</td><td>{esc(r['full_name'])}</td><td>{esc(r['terms_version'])}</td><td>{esc(r['created_at'])}</td></tr>" for r in rows)
     return page("Users", f'<div class="card scroll"><p>Latest 200 users</p><table><tr><th>Telegram ID</th><th>Username</th><th>Name</th><th>Terms</th><th>Joined</th></tr>{body}</table></div>', csrf)
+
+
+def resolve_user(db: sqlite3.Connection, identifier: str) -> int:
+    identifier = identifier.strip()
+    if re.fullmatch(r"[1-9]\d{0,19}", identifier):
+        return int(identifier)
+    if re.fullmatch(r"@[A-Za-z0-9_]{5,32}", identifier):
+        matches = db.execute(
+            "SELECT telegram_id FROM users WHERE lower(username)=lower(?)",
+            (identifier[1:],),
+        ).fetchall()
+        if len(matches) == 1:
+            return int(matches[0][0])
+        raise web.HTTPBadRequest(text="Username is not uniquely known. Ask the user to start the bot, or use their numeric Telegram ID.")
+    raise web.HTTPBadRequest(text="Enter a numeric Telegram ID or a known @username")
+
+
+async def manual_services(request: web.Request):
+    csrf = token(request)
+    with database() as db:
+        rows = db.execute(
+            "SELECT m.id,m.telegram_id,u.username,m.label,m.plan_code,m.subscription_url,m.created_at "
+            "FROM manual_services m JOIN users u ON u.telegram_id=m.telegram_id ORDER BY m.id DESC LIMIT 200"
+        ).fetchall()
+        plans = db.execute("SELECT code,title_fa FROM plans ORDER BY traffic_gb,code").fetchall()
+    options = '<option value="">No plan label</option>' + "".join(
+        f'<option value="{esc(row["code"])}">{esc(row["title_fa"])} ({esc(row["code"])})</option>'
+        for row in plans
+    )
+    form_html = (
+        f'<div class="card"><h2>Assign an existing service</h2><form method="post" action="/services">'
+        f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
+        '<label>Telegram ID or known @username<input name="user" required></label>'
+        f'<label>Plan<select name="plan_code">{options}</select></label>'
+        '<label>Service label<input name="label" maxlength="80" required></label>'
+        '<label>Subscription link<input name="subscription_url" type="url" maxlength="2048" required></label>'
+        '<p class="muted">A username must already belong to a user who started the bot. A numeric Telegram ID can be assigned before their first visit.</p>'
+        '<button>Assign service</button></form></div>'
+    )
+    body = "".join(
+        f'<tr><td>{row["id"]}</td><td>{row["telegram_id"]}</td><td>{esc("@" + row["username"] if row["username"] else "")}</td>'
+        f'<td>{esc(row["label"])}</td><td>{esc(row["plan_code"])}</td><td><code>{esc(row["subscription_url"])}</code></td>'
+        f'<td><form method="post" action="/services"><input type="hidden" name="csrf" value="{esc(csrf)}">'
+        f'<input type="hidden" name="action" value="remove"><input type="hidden" name="id" value="{row["id"]}"><button class="danger">Remove</button></form></td></tr>'
+        for row in rows
+    )
+    return page("Assigned services", form_html + f'<div class="card scroll"><table><tr><th>ID</th><th>Telegram ID</th><th>Username</th><th>Service</th><th>Plan</th><th>Link</th><th></th></tr>{body}</table></div>', csrf, request.query.get("message", ""))
+
+
+async def save_manual_service(request: web.Request):
+    csrf = token(request)
+    data = await form(request, csrf)
+    with database() as db:
+        if data.get("action") == "remove":
+            try:
+                service_id = int(data.get("id", ""))
+            except ValueError:
+                raise web.HTTPBadRequest(text="Invalid service ID")
+            db.execute("DELETE FROM manual_services WHERE id=?", (service_id,))
+            audit(db, "panel.manual_service_removed", {"id": service_id})
+        else:
+            telegram_id = resolve_user(db, str(data.get("user", "")))
+            if telegram_id >= 2**63:
+                raise web.HTTPBadRequest(text="Telegram ID is too large")
+            label = str(data.get("label", "")).strip()
+            plan_code = str(data.get("plan_code", "")).strip() or None
+            link = str(data.get("subscription_url", "")).strip()
+            parsed = urlsplit(link)
+            if not label or len(label) > 80 or len(link) > 2048 or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or not parsed.path.strip("/") or any(ord(ch) < 32 for ch in link):
+                raise web.HTTPBadRequest(text="Enter a label and valid HTTPS subscription link")
+            if plan_code and not db.execute("SELECT 1 FROM plans WHERE code=?", (plan_code,)).fetchone():
+                raise web.HTTPBadRequest(text="Unknown plan")
+            now = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                "INSERT OR IGNORE INTO users(telegram_id,username,full_name,created_at,updated_at) VALUES(?,NULL,'Assigned user',?,?)",
+                (telegram_id, now, now),
+            )
+            db.execute(
+                "INSERT INTO manual_services(telegram_id,plan_code,label,subscription_url,created_at) VALUES(?,?,?,?,?)",
+                (telegram_id, plan_code, label, link, now),
+            )
+            audit(db, "panel.manual_service_added", {"telegram_id": telegram_id, "plan_code": plan_code})
+    raise web.HTTPSeeOther("/services?message=" + quote("Service assignment saved"))
 
 
 async def orders(request: web.Request):
@@ -241,9 +324,27 @@ async def save_plan(request: web.Request):
 async def discounts(request: web.Request):
     csrf = token(request)
     with database() as db:
-        rows = db.execute("SELECT code,percent,active,created_at FROM discount_codes ORDER BY created_at DESC").fetchall()
-    body = "".join(f'<tr><td>{esc(r["code"])}</td><td>{r["percent"]}%</td><td>{"Active" if r["active"] else "Disabled"}</td><td>{esc(r["created_at"])}</td><td><form method="post" action="/discounts"><input type="hidden" name="csrf" value="{esc(csrf)}"><input type="hidden" name="code" value="{esc(r["code"])}"><input type="hidden" name="action" value="toggle"><button>{"Disable" if r["active"] else "Enable"}</button></form></td></tr>' for r in rows)
-    return page("Discounts", f'<div class="card"><form method="post" action="/discounts"><input type="hidden" name="csrf" value="{esc(csrf)}"><label>New code (CODE-35 also accepted)<input name="code" required></label><label>Percentage<input name="percent" type="number" min="1" max="100" required></label><button>Save discount</button></form></div><div class="card scroll"><table><tr><th>Code</th><th>Percent</th><th>Status</th><th>Created</th><th></th></tr>{body}</table></div>', csrf, request.query.get("message", ""))
+        rows = db.execute("SELECT d.code,d.percent,d.active,d.target_telegram_id,d.target_plan_code,u.username FROM discount_codes d LEFT JOIN users u ON u.telegram_id=d.target_telegram_id ORDER BY d.created_at DESC").fetchall()
+        plans = db.execute("SELECT code,title_fa FROM plans ORDER BY traffic_gb,code").fetchall()
+    options = '<option value="">All plans</option>' + "".join(f'<option value="{esc(row["code"])}">{esc(row["title_fa"])} ({esc(row["code"])})</option>' for row in plans)
+    body = "".join(
+        f'<tr><td>{esc(row["code"])}</td><td>{row["percent"]}%</td>'
+        f'<td>{esc("@" + row["username"] if row["username"] else row["target_telegram_id"] or "All users")}</td>'
+        f'<td>{esc(row["target_plan_code"] or "All plans")}</td><td>{"Active" if row["active"] else "Disabled"}</td>'
+        f'<td><form method="post" action="/discounts"><input type="hidden" name="csrf" value="{esc(csrf)}">'
+        f'<input type="hidden" name="code" value="{esc(row["code"])}"><input type="hidden" name="action" value="toggle">'
+        f'<button>{"Disable" if row["active"] else "Enable"}</button></form></td></tr>' for row in rows
+    )
+    form_html = (
+        f'<div class="card"><h2>Create discount</h2><form method="post" action="/discounts"><input type="hidden" name="csrf" value="{esc(csrf)}">'
+        '<div class="row"><label>Code<input name="code" placeholder="LASTOFUS-35" required></label>'
+        '<label>Percentage<input name="percent" type="number" min="1" max="100" required></label></div>'
+        '<div class="row"><label>Specific user (blank = all users)<input name="user_scope" placeholder="Telegram ID or known @username"></label>'
+        f'<label>Plan<select name="plan_scope">{options}</select></label></div>'
+        '<p class="muted">A username must already be known to the bot. Use a numeric Telegram ID for users who have not started it yet.</p>'
+        '<button>Save discount</button></form></div>'
+    )
+    return page("Discounts", form_html + f'<div class="card scroll"><table><tr><th>Code</th><th>Percent</th><th>User</th><th>Plan</th><th>Status</th><th></th></tr>{body}</table></div>', csrf, request.query.get("message", ""))
 
 
 async def save_discount(request: web.Request):
@@ -263,27 +364,43 @@ async def save_discount(request: web.Request):
                 raise web.HTTPBadRequest(text="Invalid percentage")
             if not 1 <= percent <= 100:
                 raise web.HTTPBadRequest(text="Percentage must be 1–100")
-            db.execute("INSERT INTO discount_codes(code,percent,active,created_by,created_at) VALUES(?,?,1,0,datetime('now')) ON CONFLICT(code) DO UPDATE SET percent=excluded.percent,active=1", (code, percent))
-            audit(db, "panel.discount_saved", {"code": code, "percent": percent})
+            user_scope = str(data.get("user_scope", "")).strip()
+            target_user = resolve_user(db, user_scope) if user_scope else None
+            if target_user is not None and target_user >= 2**63:
+                raise web.HTTPBadRequest(text="Telegram ID is too large")
+            target_plan = str(data.get("plan_scope", "")).strip() or None
+            if target_plan and not db.execute("SELECT 1 FROM plans WHERE code=?", (target_plan,)).fetchone():
+                raise web.HTTPBadRequest(text="Unknown plan")
+            db.execute(
+                "INSERT INTO discount_codes(code,percent,active,target_telegram_id,target_plan_code,created_by,created_at) VALUES(?,?,1,?,?,0,datetime('now')) "
+                "ON CONFLICT(code) DO UPDATE SET percent=excluded.percent,active=1,target_telegram_id=excluded.target_telegram_id,target_plan_code=excluded.target_plan_code",
+                (code, percent, target_user, target_plan),
+            )
+            audit(db, "panel.discount_saved", {"code": code, "percent": percent, "target_user": target_user, "target_plan": target_plan})
     raise web.HTTPSeeOther("/discounts?message=" + quote("Discount updated"))
 
 
 async def settings(request: web.Request):
     csrf = token(request)
     data = read_config()
-    fields = ""
-    for key in SETTINGS:
-        if key in {"XUI_VERIFY_SSL", "DEMO_MODE", "CARD_PAYMENT_ENABLED", "TRIAL_ENABLED"}:
-            field = f'<select name="{key}"><option value="true" {"selected" if data.get(key)=="true" else ""}>Enabled</option><option value="false" {"selected" if data.get(key)!="true" else ""}>Disabled</option></select>'
-        elif key == "CARD_PAYMENT_INSTRUCTIONS":
-            field = f'<textarea name="{key}" maxlength="4096">{esc(data.get(key,""))}</textarea>'
-        else:
-            value = "" if key in SECRET_SETTINGS else esc(data.get(key, ""))
-            placeholder = "Leave blank to keep current" if key in SECRET_SETTINGS else ""
-            field = f'<input name="{key}" value="{value}" placeholder="{placeholder}" {"type=password" if key in SECRET_SETTINGS else ""} maxlength="4096">'
-        fields += f'<label>{esc(key)}{field}</label>'
-    intro = "First-run setup: enter the Telegram bot token, at least one admin ID, channel, support username, and 3x-ui connection. No bot token is needed in the installer." if not CONFIG_PATH.exists() else "Saving restarts the bot. Secrets are never displayed. The panel remains available if the bot configuration fails."
-    return page("Bot settings", f'<div class="card"><p class="muted">{esc(intro)}</p><form method="post" action="/settings"><input type="hidden" name="csrf" value="{esc(csrf)}">{fields}<p><button>Save and restart bot</button></p></form></div>', csrf, request.query.get("message", ""))
+    sections = []
+    for title, keys in SETTING_GROUPS:
+        fields = []
+        for key in keys:
+            if key in {"CARD_PAYMENT_ENABLED", "TRIAL_ENABLED"}:
+                field = f'<select name="{key}"><option value="true" {"selected" if data.get(key)=="true" else ""}>Enabled</option><option value="false" {"selected" if data.get(key)!="true" else ""}>Disabled</option></select>'
+            elif key == "CARD_PAYMENT_INSTRUCTIONS":
+                field = f'<textarea name="{key}" maxlength="4096">{esc(data.get(key,""))}</textarea>'
+            else:
+                value = "" if key in SECRET_SETTINGS else esc(data.get(key, ""))
+                placeholder = "Saved — leave blank to keep current" if key in SECRET_SETTINGS and data.get(key) else ""
+                input_type = "password" if key in SECRET_SETTINGS else "text"
+                field = f'<input name="{key}" type="{input_type}" value="{value}" placeholder="{esc(placeholder)}" maxlength="4096" autocomplete="off">'
+            fields.append(f'<label>{esc(SETTING_LABELS[key])}{field}</label>')
+        sections.append(f'<section class="card setting-group"><h2>{esc(title)}</h2><div class="setting-grid">{"".join(fields)}</div></section>')
+    intro = "Enter the bot, channel, and 3x-ui details to finish setup." if not CONFIG_PATH.exists() else "Saved values remain here after refresh. Secret tokens are hidden; leave them blank to keep the saved value."
+    body = f'<p class="muted">{esc(intro)}</p><form method="post" action="/settings"><input type="hidden" name="csrf" value="{esc(csrf)}">{"".join(sections)}<div class="save-bar"><button>Save all settings</button></div></form>'
+    return page("Settings", body, csrf, request.query.get("message", ""))
 
 
 async def restart_bot():
@@ -303,6 +420,8 @@ async def save_settings(request: web.Request):
     posted = await form(request, csrf)
     data = read_config()
     for key in SETTINGS:
+        if key not in posted:
+            continue
         value = str(posted.get(key, "")).strip()
         if key in SECRET_SETTINGS and not value:
             continue
@@ -354,12 +473,13 @@ def make_app() -> web.Application:
     if not AUTH_PATH.exists():
         raise RuntimeError("Panel password not configured")
     app = web.Application(middlewares=[guard], client_max_size=64 * 1024)
+    app.router.add_static("/static/", Path(__file__).parent / "static", show_index=False)
     app.router.add_get("/login", login)
     app.router.add_post("/login", login)
     app.router.add_post("/logout", logout)
-    for path, handler in (("/", overview), ("/users", users), ("/orders", orders), ("/plans", plans), ("/discounts", discounts), ("/settings", settings), ("/terms", terms), ("/audit", audit_log)):
+    for path, handler in (("/", overview), ("/users", users), ("/services", manual_services), ("/orders", orders), ("/plans", plans), ("/discounts", discounts), ("/settings", settings), ("/terms", terms), ("/audit", audit_log)):
         app.router.add_get(path, handler)
-    for path, handler in (("/plans", save_plan), ("/discounts", save_discount), ("/settings", save_settings), ("/terms", save_terms)):
+    for path, handler in (("/plans", save_plan), ("/discounts", save_discount), ("/services", save_manual_service), ("/settings", save_settings), ("/terms", save_terms)):
         app.router.add_post(path, handler)
     return app
 

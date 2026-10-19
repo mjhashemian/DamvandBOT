@@ -6,4 +6,5 @@ __pycache__/
 *.db-*
 *.env
 .testdeps/
+web/node_modules/
 

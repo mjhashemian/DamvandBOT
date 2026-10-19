@@ -97,7 +97,18 @@ CREATE TABLE IF NOT EXISTS discount_codes (
     code TEXT PRIMARY KEY,
     percent INTEGER NOT NULL CHECK(percent BETWEEN 1 AND 100),
     active INTEGER NOT NULL DEFAULT 1,
+    target_telegram_id INTEGER,
+    target_plan_code TEXT,
     created_by INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS manual_services (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+    plan_code TEXT REFERENCES plans(code),
+    label TEXT NOT NULL,
+    subscription_url TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 
@@ -162,6 +173,8 @@ class Database:
                 ("orders", "discount_percent", "INTEGER NOT NULL DEFAULT 0"),
                 ("card_payments", "receipt_unique_id", "TEXT"),
                 ("trials", "status", "TEXT NOT NULL DEFAULT 'complete'"),
+                ("discount_codes", "target_telegram_id", "INTEGER"),
+                ("discount_codes", "target_plan_code", "TEXT"),
             ):
                 columns = {row[1] for row in await (await db.execute(f"PRAGMA table_info({table})")).fetchall()}
                 if column not in columns:
@@ -251,14 +264,17 @@ class Database:
                 "SELECT code,percent FROM discount_codes WHERE active=1 ORDER BY code"
             )).fetchall()
 
-    async def save_discount_code(self, code: str, percent: int, admin_id: int) -> None:
+    async def save_discount_code(
+        self, code: str, percent: int, admin_id: int,
+        target_telegram_id: int | None = None, target_plan_code: str | None = None,
+    ) -> None:
         if not 1 <= percent <= 100:
             raise ValueError("Discount percentage must be between 1 and 100")
         async with self.connect() as db:
             await db.execute(
-                "INSERT INTO discount_codes(code,percent,active,created_by,created_at) VALUES(?,?,1,?,?) "
-                "ON CONFLICT(code) DO UPDATE SET percent=excluded.percent,active=1,created_by=excluded.created_by",
-                (code, percent, admin_id, now_iso()),
+                "INSERT INTO discount_codes(code,percent,active,target_telegram_id,target_plan_code,created_by,created_at) VALUES(?,?,1,?,?,?,?) "
+                "ON CONFLICT(code) DO UPDATE SET percent=excluded.percent,active=1,target_telegram_id=excluded.target_telegram_id,target_plan_code=excluded.target_plan_code,created_by=excluded.created_by",
+                (code, percent, target_telegram_id, target_plan_code, admin_id, now_iso()),
             )
             await db.commit()
 
@@ -314,7 +330,10 @@ class Database:
             discount = None
             if code:
                 discount = await (await db.execute(
-                    "SELECT code,percent FROM discount_codes WHERE code=? AND active=1", (code,)
+                    "SELECT code,percent FROM discount_codes WHERE code=? AND active=1 "
+                    "AND (target_telegram_id IS NULL OR target_telegram_id=?) "
+                    "AND (target_plan_code IS NULL OR target_plan_code=?)",
+                    (code, telegram_id, order["plan_code"]),
                 )).fetchone()
             percent = int(discount["percent"]) if discount else 0
             toman = (order["toman_amount"] * (100 - percent) + 99) // 100
@@ -619,6 +638,20 @@ class Database:
                 (telegram_id, email, source, now_iso()),
             )
             await db.commit()
+
+    async def list_manual_services(self, telegram_id: int):
+        async with self.connect() as db:
+            return await (await db.execute(
+                "SELECT id,label,plan_code,subscription_url FROM manual_services WHERE telegram_id=? ORDER BY id",
+                (telegram_id,),
+            )).fetchall()
+
+    async def get_manual_service(self, service_id: int, telegram_id: int):
+        async with self.connect() as db:
+            return await (await db.execute(
+                "SELECT id,label,plan_code,subscription_url FROM manual_services WHERE id=? AND telegram_id=?",
+                (service_id, telegram_id),
+            )).fetchone()
 
     async def audit(self, event: str, telegram_id: int | None, details: dict) -> None:
         async with self.connect() as db:

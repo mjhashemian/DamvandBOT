@@ -115,11 +115,14 @@ def discount_admin_keyboard(codes: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def services_keyboard(emails: list[str]) -> InlineKeyboardMarkup:
+def services_keyboard(emails: list[str], manual_services=()) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=email, callback_data=f"service:{email}")]
             for email in emails
+        ] + [
+            [InlineKeyboardButton(text=f"📎 {service['label'][:40]}", callback_data=f"manual:{service['id']}")]
+            for service in manual_services
         ]
     )
 

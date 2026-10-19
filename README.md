@@ -24,8 +24,8 @@ A BotFather token, a 3x-ui Clients API token, and a reachable 3x-ui API are need
 setup in the panel. Add the bot as a channel administrator so it
 can check membership. For private channels, enter its numeric `-100…` ID and
 an `https://t.me/+…` join link; for public channels, a username works, though
-the numeric ID is more reliable. Verify the 3x-ui TLS certificate before disabling TLS
-verification for a local self-signed endpoint.
+the numeric ID is more reliable. The bot verifies the 3x-ui TLS certificate;
+use a trusted certificate for its HTTPS endpoint.
 
 After installation, `sudo damavand-bot` opens the menu:
 
@@ -50,8 +50,15 @@ ssh -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
 ```
 
 Then open <http://127.0.0.1:8765> and sign in. The panel shows users and
-orders and edits plans/prices, discounts, channel ID/join link/support, 3x-ui settings,
-payment method/card details, trial settings, and versioned Terms. Config
+orders and edits plans/prices, user- or plan-specific discounts, assigned
+subscription links for existing users, channel ID/join link/support, 3x-ui settings,
+payment method/card details, trial settings, and versioned Terms. The sidebar
+provides English and Persian navigation. Settings are grouped into Bot,
+Payment, Channel, and Trial sections and saved together; saved secret tokens
+stay masked and can be left blank to retain them. Assign an existing service
+by a user's numeric Telegram ID, even before they start the bot, or by an
+`@username` already known to the bot. Assigned links appear in My Services.
+Config
 changes restart the bot; plan and discount changes apply immediately. Receipt
 approval and failed-order retries remain in Telegram, where the existing
 provisioning flow handles them.
@@ -128,6 +135,11 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m unittest discover -s tests
 ```
+
+The panel frontend source is in `web/`. Runtime assets are checked in, so
+installing or updating on the VPS does not require Node.js. To rebuild after
+changing the UI, use Node.js 20+ and run `npm ci && npm run check && npm run build`
+inside `web/`, then commit the generated `damavand_bot/static/` files.
 
 The installer keeps runtime secrets outside the repository.
 `damavand-vpn-bot.env.example` is placeholder-only and for manual development,

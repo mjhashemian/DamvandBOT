@@ -53,10 +53,7 @@ class Config:
         )
         if not admin_ids:
             raise RuntimeError("ADMIN_IDS must contain at least one administrator")
-        inbound_raw = os.getenv("XUI_INBOUND_IDS", "")
-        inbound_ids = tuple(
-            int(value.strip()) for value in inbound_raw.split(",") if value.strip()
-        )
+        inbound_ids: tuple[int, ...] = ()
         card_payment_enabled = _bool("CARD_PAYMENT_ENABLED", False)
         card_payment_card_number = os.getenv("CARD_PAYMENT_CARD_NUMBER", "").strip()
         card_payment_holder = os.getenv("CARD_PAYMENT_HOLDER", "").strip()
@@ -78,10 +75,10 @@ class Config:
             terms_version=os.getenv("TERMS_VERSION", "1").strip(),
             xui_base_url=_required("XUI_BASE_URL").rstrip("/"),
             xui_api_token=_required("XUI_API_TOKEN"),
-            xui_verify_ssl=_bool("XUI_VERIFY_SSL", True),
+            xui_verify_ssl=True,
             xui_subscription_base=_required("XUI_SUBSCRIPTION_BASE").rstrip("/"),
             xui_inbound_ids=inbound_ids,
-            demo_mode=_bool("DEMO_MODE", False),
+            demo_mode=False,
             card_payment_enabled=card_payment_enabled,
             card_payment_card_number=card_payment_card_number,
             card_payment_holder=card_payment_holder,

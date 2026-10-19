@@ -118,3 +118,43 @@ class PanelTests(IsolatedAsyncioTestCase):
         response = await self.client.post("/settings", headers=self.headers, data=data, allow_redirects=False)
         self.assertEqual(303, response.status)
         self.assertEqual(data["BOT_TOKEN"], management.read_config()["BOT_TOKEN"])
+
+    async def test_settings_are_grouped_saved_and_legacy_options_hidden(self):
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "a-very-long-panel-password", "login_csrf": login_csrf}, allow_redirects=False)
+        csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
+        response = await self.client.get("/settings", headers=self.headers)
+        body = await response.text()
+        for label in ("Bot settings", "Payment settings", "Channel settings", "Trial settings", "Bot Token", "Save all settings"):
+            self.assertIn(label, body)
+        for hidden in ("XUI_VERIFY_SSL", "XUI_INBOUND_IDS", "DEMO_MODE"):
+            self.assertNotIn(hidden, body)
+        self.assertIn('id="panel-sidebar"', body)
+        self.assertNotIn('<header>', body)
+        response = await self.client.get("/static/panel.js", headers=self.headers)
+        self.assertEqual(200, response.status)
+        token = "123456789:" + "A" * 35
+        data = {"csrf": csrf, "BOT_TOKEN": token, "ADMIN_IDS": "123456789", "CHANNEL_USERNAME": "@publicchannel",
+                "SUPPORT_USERNAME": "@supportuser", "XUI_BASE_URL": "https://127.0.0.1:2053/panel",
+                "XUI_API_TOKEN": "secret", "XUI_SUBSCRIPTION_BASE": "https://example.com/sub",
+                "CARD_PAYMENT_ENABLED": "false", "TRIAL_ENABLED": "true", "TRIAL_MB": "700", "TRIAL_DAYS": "2"}
+        response = await self.client.post("/settings", headers=self.headers, data=data, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        response = await self.client.post("/settings", headers=self.headers, data={"csrf": csrf, "TRIAL_MB": "800"}, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        stored = management.read_config()
+        self.assertEqual((token, "800", "2"), (stored["BOT_TOKEN"], stored["TRIAL_MB"], stored["TRIAL_DAYS"]))
+
+    async def test_assign_service_to_known_username(self):
+        with panel.database() as db:
+            db.execute("INSERT INTO users(telegram_id,username,full_name,created_at,updated_at) VALUES(123,'damavand','User',datetime('now'),datetime('now'))")
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "a-very-long-panel-password", "login_csrf": login_csrf}, allow_redirects=False)
+        csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
+        response = await self.client.post("/services", headers=self.headers, data={"csrf": csrf, "user": "@damavand", "plan_code": "gb10", "label": "Existing", "subscription_url": "https://example.com/sub/abc"}, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        with panel.database() as db:
+            row = db.execute("SELECT telegram_id,label FROM manual_services").fetchone()
+        self.assertEqual((123, "Existing"), tuple(row))
+        response = await self.client.post("/services", headers=self.headers, data={"csrf": csrf, "user": "@unknown", "label": "No", "subscription_url": "https://example.com/sub/abc"}, allow_redirects=False)
+        self.assertEqual(400, response.status)

@@ -925,20 +925,45 @@ async def renew_list(message: Message) -> None:
     app = _app(message)
     if not await app.gate(message):
         return
+    manual_services = await app.db.list_manual_services(message.from_user.id)
     try:
         envelopes = await app.xui.clients_for_telegram(message.from_user.id)
         emails = [_client_from_envelope(item).get("email") for item in envelopes]
         emails = [email for email in emails if email]
     except XUIError:
         logger.exception("Could not load user services")
-        await message.answer("دریافت لیست سرویس‌ها موقتاً ممکن نیست.")
-        return
-    if not emails:
+        if not manual_services:
+            await message.answer("دریافت لیست سرویس‌ها موقتاً ممکن نیست.")
+            return
+        emails = []
+    if not emails and not manual_services:
         await message.answer("هنوز سرویسی به حساب تلگرامت متصل نشده است.")
         return
     await message.answer(
         "📋 <b>لیست سرویس‌هایی که داری اینجاست؛ هرکدوم رو انتخاب کنی می‌تونی جزئیاتش رو ببینی:</b>",
-        reply_markup=services_keyboard(emails),
+        reply_markup=services_keyboard(emails, manual_services),
+    )
+
+
+@router.callback_query(F.data.startswith("manual:"))
+async def manual_service_detail(callback: CallbackQuery) -> None:
+    app = _app(callback)
+    if not await app.gate(callback):
+        await callback.answer()
+        return
+    try:
+        service_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("سرویس نامعتبر است.", show_alert=True)
+        return
+    service = await app.db.get_manual_service(service_id, callback.from_user.id)
+    if not service:
+        await callback.answer("این سرویس متعلق به حساب شما نیست.", show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(
+        f"<b>سرویس:</b> {html.escape(service['label'])}\n"
+        f"<b>لینک اشتراک:</b>\n<code>{html.escape(service['subscription_url'])}</code>"
     )
 
 

@@ -121,6 +121,29 @@ class DatabaseTests(IsolatedAsyncioTestCase):
         self.assertEqual((0, 75_000, None, "pending"),
                          (order["discount_percent"], order["toman_amount"], order["discount_code"], order["status"]))
 
+    async def test_discount_user_and_plan_scopes(self):
+        plan10 = await self.db.get_plan("gb10")
+        plan20 = await self.db.get_plan("gb20")
+        await self.db.upsert_user(999, "other", "Other User")
+        await self.db.save_discount_code("TARGET-40", 40, 456, target_telegram_id=123, target_plan_code="gb10")
+        for owner, plan, expected_percent in ((999, plan10, 0), (123, plan20, 0), (123, plan10, 40)):
+            order_id, _ = await self.db.create_order(owner, "buy", plan, "scope_client", await_discount=True)
+            order = await self.db.finalize_discount_order(order_id, owner, "TARGET-40")
+            self.assertEqual(expected_percent, order["discount_percent"])
+
+    async def test_manual_service_is_visible_only_to_its_owner(self):
+        async with self.db.connect() as db:
+            cursor = await db.execute(
+                "INSERT INTO manual_services(telegram_id,plan_code,label,subscription_url,created_at) VALUES(?,?,?,?,datetime('now'))",
+                (123, "gb10", "Existing plan", "https://example.com/sub/abc"),
+            )
+            service_id = cursor.lastrowid
+            await db.commit()
+        self.assertEqual(1, len(await self.db.list_manual_services(123)))
+        self.assertEqual([], await self.db.list_manual_services(999))
+        self.assertIsNone(await self.db.get_manual_service(service_id, 999))
+        self.assertEqual("Existing plan", (await self.db.get_manual_service(service_id, 123))["label"])
+
     async def test_full_discount_skips_payment_and_cannot_be_reused(self):
         plan = await self.db.get_plan("gb10")
         await self.db.save_discount_code("FREEBIE-100", 100, 456)

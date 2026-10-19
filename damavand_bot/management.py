@@ -45,13 +45,13 @@ DEFAULTS = {
 }
 SETTINGS = (
     "BOT_TOKEN", "ADMIN_IDS", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL", "SUPPORT_USERNAME",
-    "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_VERIFY_SSL",
-    "XUI_SUBSCRIPTION_BASE", "XUI_INBOUND_IDS", "DEMO_MODE",
+    "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE",
     "CARD_PAYMENT_ENABLED", "CARD_PAYMENT_CARD_NUMBER",
     "CARD_PAYMENT_HOLDER", "CARD_PAYMENT_INSTRUCTIONS",
     "TRIAL_ENABLED", "TRIAL_MB", "TRIAL_DAYS",
 )
 SECRET_SETTINGS = frozenset({"BOT_TOKEN", "XUI_API_TOKEN"})
+FIXED_SETTINGS = {"XUI_VERIFY_SSL": "true", "XUI_INBOUND_IDS": "", "DEMO_MODE": "false"}
 
 
 def atomic_json(path: Path, data: dict) -> None:
@@ -74,11 +74,11 @@ def read_config() -> dict[str, str]:
     data = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
     if not isinstance(data, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in data.items()):
         raise ValueError("Invalid configuration file")
-    return {**DEFAULTS, **data}
+    return {**DEFAULTS, **data, **FIXED_SETTINGS}
 
 
 def write_config(data: dict[str, str]) -> None:
-    atomic_json(CONFIG_PATH, data)
+    atomic_json(CONFIG_PATH, {key: value for key, value in data.items() if key not in FIXED_SETTINGS})
 
 
 def validate_settings(data: dict[str, str]) -> None:
