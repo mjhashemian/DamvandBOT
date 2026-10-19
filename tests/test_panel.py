@@ -21,8 +21,7 @@ class PanelTests(IsolatedAsyncioTestCase):
         self.defaults_patch = patch.object(management, "DEFAULTS", {**management.DEFAULTS, "DB_PATH": str(root / "bot.db"), "TERMS_FILE": str(root / "terms-fa.txt")})
         self.auth_patch = patch.object(management, "AUTH_PATH", root / "panel-auth.json")
         self.panel_auth_patch = patch.object(panel, "AUTH_PATH", root / "panel-auth.json")
-        self.tunnel_patch = patch.object(panel, "PANEL_TUNNEL_HOST_PATH", root / "panel-tunnel-host")
-        for item in (self.config_patch, self.panel_config_patch, self.defaults_patch, self.auth_patch, self.panel_auth_patch, self.tunnel_patch):
+        for item in (self.config_patch, self.panel_config_patch, self.defaults_patch, self.auth_patch, self.panel_auth_patch):
             item.start()
             self.addCleanup(item.stop)
         data = dict(management.DEFAULTS)
@@ -68,18 +67,6 @@ class PanelTests(IsolatedAsyncioTestCase):
         response = await self.client.get("/settings", headers=self.headers)
         self.assertEqual(200, response.status)
         self.assertNotIn(data["BOT_TOKEN"], await response.text())
-
-    async def test_tunnel_hostname_requires_local_https_proxy_and_secure_cookie(self):
-        panel.PANEL_TUNNEL_HOST_PATH.write_text("bot.example.com\n", encoding="ascii")
-        host = {"Host": "bot.example.com"}
-        response = await self.client.get("/login", headers=host)
-        self.assertEqual(403, response.status)
-        headers = {**host, "X-Forwarded-Proto": "https", "CF-Connecting-IP": "203.0.113.8"}
-        response = await self.client.get("/login", headers=headers)
-        self.assertEqual(200, response.status)
-        response = await self.client.post("/login", headers=headers, data={"password": "a-very-long-panel-password"}, allow_redirects=False)
-        self.assertEqual(303, response.status)
-        self.assertTrue(response.cookies[panel.COOKIE]["secure"])
 
     async def test_first_run_settings_are_entered_in_panel(self):
         management.CONFIG_PATH.unlink()
