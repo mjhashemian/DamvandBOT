@@ -86,10 +86,6 @@ to Cloudflare over HTTPS on port 443; only the local `cloudflared` connector
 speaks HTTP to the loopback-bound bot panel. No inbound VPS firewall port or
 Cloudflare Global API Key is needed. Use a separate hostname from x-ui/VPN,
 and optionally require Cloudflare Access in front of the panel.
-For a locally managed tunnel, [`config/cloudflared.yml.example`](config/cloudflared.yml.example)
-is a placeholder-only ingress template. Substitute its tunnel UUID and bot
-hostname privately on the VPS; never commit the tunnel credential JSON or
-the account-wide `cert.pem` produced during `cloudflared tunnel login`.
 
 ## Files and lifecycle
 
