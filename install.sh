@@ -12,6 +12,7 @@ PANEL_UNIT='/etc/systemd/system/damavand-vpn-panel.service'
 SERVICE_USER='damavand-bot'
 BOOTSTRAP_PASSWORD_FILE='/root/damavand-panel-password'
 PANEL_DOMAIN_FILE="$CONFIG_DIR/panel-domain"
+PANEL_TUNNEL_HOST_FILE="$CONFIG_DIR/panel-tunnel-host"
 NGINX_SITE='/etc/nginx/sites-available/damavand-vpn-panel'
 NGINX_LINK='/etc/nginx/sites-enabled/damavand-vpn-panel'
 TLS_RELOAD_UNIT='/etc/systemd/system/damavand-vpn-panel-tls-reload.service'
@@ -95,6 +96,9 @@ show_panel() {
   if [[ -f "$PANEL_DOMAIN_FILE" ]]; then
     echo "Open https://$(<"$PANEL_DOMAIN_FILE"):8765"
     echo 'Allow TCP port 8765 in your cloud security group. Plain HTTP is disabled.'
+  elif [[ -f "$PANEL_TUNNEL_HOST_FILE" ]]; then
+    echo "Open https://$(<"$PANEL_TUNNEL_HOST_FILE")/ after the Cloudflare Tunnel route is active."
+    echo 'The panel remains bound to VPS loopback; no public origin port is required.'
   else
     echo 'On your own computer, open an SSH tunnel:'
     echo '  ssh -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER'
@@ -103,10 +107,30 @@ show_panel() {
   fi
 }
 
+expose_tunnel() {
+  require_root
+  check_checkout
+  local hostname="${1,,}"
+  if [[ ! "$hostname" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ || "$hostname" != *.* ]]; then
+    echo 'Enter a valid public DNS hostname.' >&2; exit 1
+  fi
+  if [[ -f "$PANEL_DOMAIN_FILE" ]]; then
+    echo 'Remove the existing direct-HTTPS exposure before enabling tunnel mode.' >&2; exit 1
+  fi
+  printf '%s\n' "$hostname" > "$PANEL_TUNNEL_HOST_FILE"
+  chown "$SERVICE_USER:$SERVICE_USER" "$PANEL_TUNNEL_HOST_FILE"
+  chmod 0600 "$PANEL_TUNNEL_HOST_FILE"
+  systemctl restart damavand-vpn-panel.service
+  show_panel
+}
+
 expose_domain() {
   require_root
   check_checkout
   local domain="${1,,}" cert="${2:-}" key="${3:-}" cert_pub key_pub
+  if [[ -f "$PANEL_TUNNEL_HOST_FILE" ]]; then
+    echo 'Remove the tunnel exposure before enabling direct HTTPS.' >&2; exit 1
+  fi
   if [[ ! "$domain" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ || "$domain" != *.* ]]; then
     echo 'Enter a valid public DNS hostname.' >&2; exit 1
   fi
@@ -191,7 +215,7 @@ uninstall_bot() {
   if [[ -L "$NGINX_LINK" && "$(readlink "$NGINX_LINK")" == "$NGINX_SITE" ]]; then unlink "$NGINX_LINK"; fi
   if [[ -f "$NGINX_SITE" ]] && grep -q '^# Managed by Damavand Bot$' "$NGINX_SITE"; then rm -f -- "$NGINX_SITE"; fi
   if command -v nginx >/dev/null; then nginx -t && systemctl reload nginx.service || true; fi
-  rm -f -- "$PANEL_DOMAIN_FILE" "$TLS_RELOAD_UNIT" "$TLS_RELOAD_TIMER" "$BOOTSTRAP_PASSWORD_FILE"
+  rm -f -- "$PANEL_DOMAIN_FILE" "$PANEL_TUNNEL_HOST_FILE" "$TLS_RELOAD_UNIT" "$TLS_RELOAD_TIMER" "$BOOTSTRAP_PASSWORD_FILE"
   rm -f -- "$BOT_UNIT" "$PANEL_UNIT" "$CLI_PATH"
   systemctl daemon-reload
   if [[ "$(realpath -e "$APP_DIR")" != "$APP_DIR" ]]; then
@@ -229,12 +253,14 @@ menu() {
   echo '4) Uninstall'
   echo '5) Reset panel password'
   echo '6) Expose panel on an existing TLS domain'
+  echo '7) Allow a Cloudflare Tunnel hostname'
   local answer
-  read -r -p 'Choose 1-6: ' answer
+  read -r -p 'Choose 1-7: ' answer
   case "$answer" in
     1) install_bot ;; 2) update_bot ;; 3) show_panel ;;
     4) uninstall_bot ;; 5) password_reset ;;
     6) echo 'Run: sudo damavand-bot expose-domain DOMAIN FULLCHAIN_PATH PRIVATE_KEY_PATH' ;;
+    7) echo 'Run: sudo damavand-bot expose-tunnel HOSTNAME' ;;
     *) echo 'Invalid choice' >&2; exit 1 ;;
   esac
 }
@@ -242,6 +268,7 @@ menu() {
 case "${1:-menu}" in
   install) install_bot ;; update) update_bot ;; panel) show_panel ;;
   expose-domain) expose_domain "${2:-}" "${3:-}" "${4:-}" ;;
+  expose-tunnel) expose_tunnel "${2:-}" ;;
   uninstall) uninstall_bot ;; password) password_reset ;; menu) menu ;;
-  *) echo 'Usage: damavand-bot [install|update|panel|uninstall|password|expose-domain DOMAIN CERT KEY]' >&2; exit 1 ;;
+  *) echo 'Usage: damavand-bot [install|update|panel|uninstall|password|expose-domain DOMAIN CERT KEY|expose-tunnel HOSTNAME]' >&2; exit 1 ;;
 esac

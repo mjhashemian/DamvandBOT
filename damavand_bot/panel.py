@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import ipaddress
 import json
 import os
 import re
@@ -18,7 +19,7 @@ from urllib.parse import quote
 from aiohttp import web
 
 from .management import (
-    AUTH_PATH, CONFIG_DIR, CONFIG_PATH, PANEL_DOMAIN_PATH,
+    AUTH_PATH, CONFIG_DIR, CONFIG_PATH, PANEL_DOMAIN_PATH, PANEL_TUNNEL_HOST_PATH,
     SECRET_SETTINGS, SETTINGS,
     read_config, validate_settings, verify_panel_password, write_config,
 )
@@ -101,11 +102,15 @@ async def form(request: web.Request, csrf: str):
 @web.middleware
 async def guard(request: web.Request, handler):
     domain = PANEL_DOMAIN_PATH.read_text(encoding="ascii").strip() if PANEL_DOMAIN_PATH.exists() else ""
+    tunnel_host = PANEL_TUNNEL_HOST_PATH.read_text(encoding="ascii").strip() if PANEL_TUNNEL_HOST_PATH.exists() else ""
     backend_port = 8766 if domain else 8765
     local_hosts = {f"127.0.0.1:{backend_port}", f"localhost:{backend_port}", f"[::1]:{backend_port}"}
-    if domain and request.remote == "127.0.0.1" and request.headers.get("X-Forwarded-Proto") == "https":
+    trusted_https_proxy = request.remote == "127.0.0.1" and request.headers.get("X-Forwarded-Proto") == "https" and (
+        request.host == f"{domain}:8765" or request.host == tunnel_host
+    )
+    if trusted_https_proxy:
         request = request.clone(scheme="https")
-    if request.host not in local_hosts and not (request.secure and request.host == f"{domain}:8765"):
+    if request.host not in local_hosts and not (trusted_https_proxy and request.secure):
         raise web.HTTPForbidden(text="Invalid panel host or insecure connection")
     if request.method == "POST":
         origin = request.headers.get("Origin")
@@ -118,7 +123,13 @@ async def login(request: web.Request):
     if request.method == "GET":
         return page("Sign in", '<div class="card"><form method="post"><label>Panel password</label><input type="password" name="password" autocomplete="current-password" required><p><button>Sign in</button></p></form></div>')
     now = time.monotonic()
-    client_ip = request.headers.get("X-Real-IP", "") if request.remote == "127.0.0.1" and request.headers.get("X-Forwarded-Proto") == "https" else request.remote or "unknown"
+    client_ip = request.remote or "unknown"
+    if request.secure and request.remote == "127.0.0.1":
+        forwarded_ip = request.headers.get("CF-Connecting-IP") if PANEL_TUNNEL_HOST_PATH.exists() else request.headers.get("X-Real-IP")
+        try:
+            client_ip = str(ipaddress.ip_address(forwarded_ip)) if forwarded_ip else client_ip
+        except ValueError:
+            pass
     attempts = FAILURES[client_ip] = [at for at in FAILURES.get(client_ip, []) if now - at < 900]
     if len(attempts) >= 10:
         raise web.HTTPTooManyRequests(text="Too many sign-in attempts. Try again later.")

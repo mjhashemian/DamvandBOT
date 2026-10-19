@@ -35,6 +35,7 @@ After installation, `sudo damavand-bot` opens the menu:
 4. Uninstall (private data preserved unless separately confirmed)
 5. Reset panel password
 6. Expose the panel using an existing HTTPS certificate
+7. Allow a Cloudflare Tunnel hostname
 
 The same actions are available as `sudo damavand-bot update`, `panel`,
 `uninstall`, and `password`.
@@ -76,6 +77,15 @@ daily to pick up certificate renewals; your existing certificate renewal job
 must still continue to run. A separate bot subdomain is preferable to using
 the exact x-ui hostname because browser cookies are shared across ports on
 one hostname. Plain `http://` is not supported for public access.
+
+If the public port is filtered or occupied, use a dedicated hostname through
+[Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/get-started/).
+Configure its published application route to `http://127.0.0.1:8765` on the VPS,
+then run `sudo damavand-bot expose-tunnel YOUR_BOT_DOMAIN`. The browser connects
+to Cloudflare over HTTPS on port 443; only the local `cloudflared` connector
+speaks HTTP to the loopback-bound bot panel. No inbound VPS firewall port or
+Cloudflare Global API Key is needed. Use a separate hostname from x-ui/VPN,
+and optionally require Cloudflare Access in front of the panel.
 
 ## Files and lifecycle
 

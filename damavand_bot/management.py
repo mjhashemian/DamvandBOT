@@ -18,6 +18,7 @@ CONFIG_DIR = Path(os.environ.get("DAMAVAND_CONFIG_DIR", "/etc/damavand-vpn-bot")
 CONFIG_PATH = CONFIG_DIR / "config.json"
 AUTH_PATH = CONFIG_DIR / "panel-auth.json"
 PANEL_DOMAIN_PATH = CONFIG_DIR / "panel-domain"
+PANEL_TUNNEL_HOST_PATH = CONFIG_DIR / "panel-tunnel-host"
 
 DEFAULTS = {
     "BOT_TOKEN": "",
