@@ -40,6 +40,13 @@ const translations: Record<string, string> = {
   'Service assignment saved':'سرویس اختصاص داده شد','Settings saved; bot restart requested':'تنظیمات ذخیره شد؛ ربات در حال راه‌اندازی مجدد است',
   'Saved — leave blank to keep current':'ذخیره شده؛ برای حفظ مقدار قبلی خالی بگذارید',
   'Payment receipts must be verified against your bank account before approval in Telegram.':'پیش از تأیید رسید در تلگرام، واریز را در حساب بانکی خود بررسی کنید.',
+  'users':'کاربران','orders':'سفارش‌ها','services':'سرویس‌ها','trials':'آزمایشی‌ها','Receipts awaiting review':'رسیدهای در انتظار بررسی',
+  'Latest 200 orders. Receipt approval and retries remain in the bot, where provisioning is transactional.':'۲۰۰ سفارش اخیر. تأیید رسید و تلاش مجدد برای ساخت سرویس همچنان در ربات انجام می‌شود.',
+  'Plan saved':'پلن ذخیره شد','Discount updated':'تخفیف به‌روزرسانی شد','Terms saved; users must accept again':'قوانین ذخیره شد؛ کاربران باید دوباره آن را بپذیرند',
+  'Active':'فعال','pending':'در انتظار','processing':'در حال پردازش','paid':'پرداخت‌شده','paid_error':'خطای ساخت','card_pending_review':'در انتظار بررسی رسید','completed':'تکمیل‌شده','failed':'ناموفق',
+  'buy':'خرید','renew':'تمدید','trial':'آزمایشی','Saved':'ذخیره‌شده',
+  'The panel is ready. Add the Telegram bot token, admin IDs, channel, 3x-ui API and payment settings in':'پنل آماده است. توکن ربات، شناسه مدیران، کانال، API پنل 3x-ui و تنظیمات پرداخت را در',
+  '. The bot will start after valid settings are saved.':' وارد کنید. ربات پس از ذخیره تنظیمات معتبر شروع می‌شود.',
 }
 
 function translateContent(language: Language) {
@@ -63,6 +70,7 @@ function translateContent(language: Language) {
     input.dataset.originalPlaceholder = original
     input.placeholder = language === 'fa' ? (translations[original] ?? original) : original
   })
+  document.title = `${main.querySelector('h1')?.textContent ?? 'Damavand'} · Damavand Bot`
 }
 
 function App({ csrf }: { csrf: string }) {
