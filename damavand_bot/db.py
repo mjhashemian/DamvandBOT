@@ -112,6 +112,17 @@ CREATE TABLE IF NOT EXISTS manual_services (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pending_services (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL COLLATE NOCASE,
+    plan_code TEXT REFERENCES plans(code),
+    label TEXT NOT NULL,
+    subscription_url TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS pending_services_username_idx ON pending_services(username);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event TEXT NOT NULL,
@@ -645,6 +656,37 @@ class Database:
                 "SELECT id,label,plan_code,subscription_url FROM manual_services WHERE telegram_id=? ORDER BY id",
                 (telegram_id,),
             )).fetchall()
+
+    async def claim_pending_services(self, telegram_id: int, username: str | None) -> int:
+        """Bind username-matched services to one immutable Telegram ID exactly once."""
+        if not username:
+            return 0
+        normalized = username.removeprefix("@").lower()
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = await (await db.execute(
+                    "SELECT id,plan_code,label,subscription_url,created_at FROM pending_services WHERE username=? ORDER BY id",
+                    (normalized,),
+                )).fetchall()
+                if rows:
+                    await db.executemany(
+                        "INSERT INTO manual_services(telegram_id,plan_code,label,subscription_url,created_at) VALUES(?,?,?,?,?)",
+                        [(telegram_id, row["plan_code"], row["label"], row["subscription_url"], row["created_at"]) for row in rows],
+                    )
+                    await db.executemany(
+                        "DELETE FROM pending_services WHERE id=?",
+                        [(row["id"],) for row in rows],
+                    )
+                    await db.execute(
+                        "INSERT INTO audit_log(event,telegram_id,details_json,created_at) VALUES(?,?,?,?)",
+                        ("bot.pending_services_claimed", telegram_id, json.dumps({"count": len(rows)}), now_iso()),
+                    )
+                await db.commit()
+                return len(rows)
+            except Exception:
+                await db.rollback()
+                raise
 
     async def get_manual_service(self, service_id: int, telegram_id: int):
         async with self.connect() as db:

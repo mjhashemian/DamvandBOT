@@ -57,9 +57,12 @@ provides English and Persian navigation. Settings are grouped into Bot,
 Payment, Channel, and Trial sections and saved together; saved Bot and 3x-ui
 tokens stay masked until you click Show. The reveal request requires the active
 panel session and CSRF token; leave token fields blank to retain saved values.
-Assign an existing service
-by a user's numeric Telegram ID, even before they start the bot, or by an
-`@username` already known to the bot. Assigned links appear in My Services.
+Assign an existing service by a user's numeric Telegram ID, even before they
+start the bot. You can also enter an `@username` that has not started the bot:
+the assignment waits in the panel and attaches automatically to the first
+Telegram account with that username to send `/start`. Once attached, it stays
+bound to that account's numeric ID and appears in My Services. Because Telegram
+usernames can change or be reassigned, use the numeric ID when available.
 Config
 changes restart the bot; plan and discount changes apply immediately. Receipt
 approval and failed-order retries remain in Telegram, where the existing

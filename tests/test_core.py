@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from damavand_bot.app import _finish_discount, _provision_order, _send_credentials
+from damavand_bot.app import _finish_discount, _provision_order, _send_credentials, start
 from damavand_bot.db import Database
 
 
@@ -143,6 +143,37 @@ class DatabaseTests(IsolatedAsyncioTestCase):
         self.assertEqual([], await self.db.list_manual_services(999))
         self.assertIsNone(await self.db.get_manual_service(service_id, 999))
         self.assertEqual("Existing plan", (await self.db.get_manual_service(service_id, 123))["label"])
+
+    async def test_pending_username_service_claims_once_and_binds_to_telegram_id(self):
+        async with self.db.connect() as db:
+            await db.execute(
+                "INSERT INTO pending_services(username,plan_code,label,subscription_url,created_at) VALUES(?,?,?,?,datetime('now'))",
+                ("damavandhashemian", "gb10", "Old XUI service", "https://example.com/sub/old"),
+            )
+            await db.commit()
+        self.assertEqual(0, await self.db.claim_pending_services(123, "differentuser"))
+        self.assertEqual(1, await self.db.claim_pending_services(123, "DamavandHashemian"))
+        self.assertEqual(0, await self.db.claim_pending_services(999, "damavandhashemian"))
+        self.assertEqual(1, len(await self.db.list_manual_services(123)))
+        self.assertEqual([], await self.db.list_manual_services(999))
+        async with self.db.connect() as db:
+            self.assertEqual(0, (await (await db.execute("SELECT count(*) FROM pending_services")).fetchone())[0])
+
+    async def test_start_attaches_pending_username_service(self):
+        async with self.db.connect() as db:
+            await db.execute(
+                "INSERT INTO pending_services(username,plan_code,label,subscription_url,created_at) VALUES(?,?,?,?,datetime('now'))",
+                ("newtelegramuser", None, "Old service", "https://example.com/sub/on-start"),
+            )
+            await db.commit()
+        user = SimpleNamespace(id=777, username="NewTelegramUser", full_name="New User")
+        message = SimpleNamespace(from_user=user, answer=AsyncMock())
+        app = SimpleNamespace(db=self.db, gate=AsyncMock(return_value=True), show_welcome=AsyncMock())
+        with patch("damavand_bot.app.runtime_app", app):
+            await start(message)
+        self.assertEqual(1, len(await self.db.list_manual_services(777)))
+        app.show_welcome.assert_awaited_once_with(message)
+        self.assertEqual(2, message.answer.await_count)
 
     async def test_full_discount_skips_payment_and_cannot_be_reused(self):
         plan = await self.db.get_plan("gb10")

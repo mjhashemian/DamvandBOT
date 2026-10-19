@@ -367,11 +367,16 @@ async def start(message: Message) -> None:
     user = message.from_user
     is_new_user = not await app.db.user_exists(user.id)
     await app.db.upsert_user(user.id, user.username, user.full_name)
+    claimed_services = await app.db.claim_pending_services(user.id, user.username)
     if is_new_user:
         await message.answer(STARTUP_WELCOME.format(name=html.escape(user.full_name)))
     if not await app.gate(message):
         return
     await app.show_welcome(message)
+    if claimed_services:
+        await message.answer(
+            "✅ سرویس قبلی‌ات به حسابت اضافه شد. از بخش «سرویس‌های من» می‌تونی لینک اشتراکت رو ببینی."
+        )
 
 
 @router.callback_query(F.data == "check_join")

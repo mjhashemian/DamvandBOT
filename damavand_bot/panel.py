@@ -210,6 +210,10 @@ async def manual_services(request: web.Request):
             "SELECT m.id,m.telegram_id,u.username,m.label,m.plan_code,m.subscription_url,m.created_at "
             "FROM manual_services m JOIN users u ON u.telegram_id=m.telegram_id ORDER BY m.id DESC LIMIT 200"
         ).fetchall()
+        pending = db.execute(
+            "SELECT id,username,label,plan_code,subscription_url,created_at "
+            "FROM pending_services ORDER BY id DESC LIMIT 200"
+        ).fetchall()
         plans = db.execute("SELECT code,title_fa FROM plans ORDER BY traffic_gb,code").fetchall()
     options = '<option value="">No plan label</option>' + "".join(
         f'<option value="{esc(row["code"])}">{esc(row["title_fa"])} ({esc(row["code"])})</option>'
@@ -218,11 +222,11 @@ async def manual_services(request: web.Request):
     form_html = (
         f'<div class="card"><h2>Assign an existing service</h2><form method="post" action="/services">'
         f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
-        '<label>Telegram ID or known @username<input name="user" required></label>'
+        '<label>Telegram ID or @username<input name="user" required></label>'
         f'<label>Plan<select name="plan_code">{options}</select></label>'
-        '<label>Service label<input name="label" maxlength="80" required></label>'
+        '<label>Service label (optional)<input name="label" maxlength="80" placeholder="Existing 3x-ui service"></label>'
         '<label>Subscription link<input name="subscription_url" type="url" maxlength="2048" required></label>'
-        '<p class="muted">A username must already belong to a user who started the bot. A numeric Telegram ID can be assigned before their first visit.</p>'
+        '<p class="muted">If the @username has not started the bot, this link waits here and attaches automatically on their first /start. Telegram usernames can change or be reassigned before then; use a numeric ID when available.</p>'
         '<button>Assign service</button></form></div>'
     )
     body = "".join(
@@ -232,43 +236,89 @@ async def manual_services(request: web.Request):
         f'<input type="hidden" name="action" value="remove"><input type="hidden" name="id" value="{row["id"]}"><button class="danger">Remove</button></form></td></tr>'
         for row in rows
     )
-    return page("Assigned services", form_html + f'<div class="card scroll"><table><tr><th>ID</th><th>Telegram ID</th><th>Username</th><th>Service</th><th>Plan</th><th>Link</th><th></th></tr>{body}</table></div>', csrf, request.query.get("message", ""))
+    pending_body = "".join(
+        f'<tr><td>{row["id"]}</td><td>{esc("@" + row["username"])}</td>'
+        f'<td>{esc(row["label"])}</td><td>{esc(row["plan_code"])}</td>'
+        f'<td><code>{esc(row["subscription_url"])}</code></td>'
+        f'<td><form method="post" action="/services"><input type="hidden" name="csrf" value="{esc(csrf)}">'
+        f'<input type="hidden" name="action" value="remove_pending"><input type="hidden" name="id" value="{row["id"]}">'
+        '<button class="danger">Remove</button></form></td></tr>'
+        for row in pending
+    )
+    pending_section = (
+        '<div class="card scroll"><h2>Waiting for first /start</h2>'
+        '<table><tr><th>ID</th><th>Username</th><th>Service</th><th>Plan</th><th>Link</th><th></th></tr>'
+        f'{pending_body}</table></div>'
+    )
+    assigned_section = (
+        '<div class="card scroll"><h2>Assigned to Telegram accounts</h2>'
+        '<table><tr><th>ID</th><th>Telegram ID</th><th>Username</th><th>Service</th><th>Plan</th><th>Link</th><th></th></tr>'
+        f'{body}</table></div>'
+    )
+    return page("Assigned services", form_html + pending_section + assigned_section, csrf, request.query.get("message", ""))
 
 
 async def save_manual_service(request: web.Request):
     csrf = token(request)
     data = await form(request, csrf)
+    pending_username = None
     with database() as db:
-        if data.get("action") == "remove":
+        if data.get("action") in {"remove", "remove_pending"}:
             try:
                 service_id = int(data.get("id", ""))
             except ValueError:
                 raise web.HTTPBadRequest(text="Invalid service ID")
-            db.execute("DELETE FROM manual_services WHERE id=?", (service_id,))
-            audit(db, "panel.manual_service_removed", {"id": service_id})
+            pending = data.get("action") == "remove_pending"
+            db.execute("DELETE FROM pending_services WHERE id=?" if pending else "DELETE FROM manual_services WHERE id=?", (service_id,))
+            audit(db, "panel.pending_service_removed" if pending else "panel.manual_service_removed", {"id": service_id})
         else:
-            telegram_id = resolve_user(db, str(data.get("user", "")))
-            if telegram_id >= 2**63:
+            identifier = str(data.get("user", "")).strip()
+            pending_username = None
+            if re.fullmatch(r"@[A-Za-z0-9_]{5,32}", identifier):
+                matches = db.execute(
+                    "SELECT telegram_id FROM users WHERE lower(username)=lower(?)", (identifier[1:],)
+                ).fetchall()
+                if len(matches) > 1:
+                    raise web.HTTPBadRequest(text="Username matches multiple known accounts; use a numeric Telegram ID")
+                telegram_id = int(matches[0][0]) if matches else None
+                pending_username = identifier[1:].lower() if not matches else None
+            else:
+                telegram_id = resolve_user(db, identifier)
+            if telegram_id is not None and telegram_id >= 2**63:
                 raise web.HTTPBadRequest(text="Telegram ID is too large")
-            label = str(data.get("label", "")).strip()
+            label = str(data.get("label", "")).strip() or "Existing 3x-ui service"
             plan_code = str(data.get("plan_code", "")).strip() or None
             link = str(data.get("subscription_url", "")).strip()
-            parsed = urlsplit(link)
-            if not label or len(label) > 80 or len(link) > 2048 or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or not parsed.path.strip("/") or any(ord(ch) < 32 for ch in link):
+            try:
+                parsed = urlsplit(link)
+                port_valid = parsed.port is None or 1 <= parsed.port <= 65535
+            except ValueError:
+                raise web.HTTPBadRequest(text="Enter a valid HTTPS subscription link")
+            if len(label) > 80 or len(link) > 2048 or parsed.scheme != "https" or not parsed.hostname or not port_valid or parsed.username or parsed.password or parsed.fragment or not parsed.path.strip("/") or any(ord(ch) < 32 for ch in link):
                 raise web.HTTPBadRequest(text="Enter a label and valid HTTPS subscription link")
             if plan_code and not db.execute("SELECT 1 FROM plans WHERE code=?", (plan_code,)).fetchone():
                 raise web.HTTPBadRequest(text="Unknown plan")
+            if db.execute("SELECT 1 FROM manual_services WHERE subscription_url=?", (link,)).fetchone() or db.execute("SELECT 1 FROM pending_services WHERE subscription_url=?", (link,)).fetchone():
+                raise web.HTTPBadRequest(text="This subscription link is already assigned")
             now = datetime.now(timezone.utc).isoformat()
-            db.execute(
-                "INSERT OR IGNORE INTO users(telegram_id,username,full_name,created_at,updated_at) VALUES(?,NULL,'Assigned user',?,?)",
-                (telegram_id, now, now),
-            )
-            db.execute(
-                "INSERT INTO manual_services(telegram_id,plan_code,label,subscription_url,created_at) VALUES(?,?,?,?,?)",
-                (telegram_id, plan_code, label, link, now),
-            )
-            audit(db, "panel.manual_service_added", {"telegram_id": telegram_id, "plan_code": plan_code})
-    raise web.HTTPSeeOther("/services?message=" + quote("Service assignment saved"))
+            if pending_username:
+                db.execute(
+                    "INSERT INTO pending_services(username,plan_code,label,subscription_url,created_at) VALUES(?,?,?,?,?)",
+                    (pending_username, plan_code, label, link, now),
+                )
+                audit(db, "panel.pending_service_added", {"username": pending_username, "plan_code": plan_code})
+            else:
+                db.execute(
+                    "INSERT OR IGNORE INTO users(telegram_id,username,full_name,created_at,updated_at) VALUES(?,NULL,'Assigned user',?,?)",
+                    (telegram_id, now, now),
+                )
+                db.execute(
+                    "INSERT INTO manual_services(telegram_id,plan_code,label,subscription_url,created_at) VALUES(?,?,?,?,?)",
+                    (telegram_id, plan_code, label, link, now),
+                )
+                audit(db, "panel.manual_service_added", {"telegram_id": telegram_id, "plan_code": plan_code})
+    message = "Waiting for username to start the bot" if pending_username else "Service assignment saved" if data.get("action") not in {"remove", "remove_pending"} else "Service removed"
+    raise web.HTTPSeeOther("/services?message=" + quote(message))
 
 
 async def orders(request: web.Request):

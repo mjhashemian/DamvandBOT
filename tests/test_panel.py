@@ -186,3 +186,28 @@ class PanelTests(IsolatedAsyncioTestCase):
         self.assertEqual((123, "Existing"), tuple(row))
         response = await self.client.post("/services", headers=self.headers, data={"csrf": csrf, "user": "@unknown", "label": "No", "subscription_url": "https://example.com/sub/abc"}, allow_redirects=False)
         self.assertEqual(400, response.status)
+
+    async def test_unknown_username_waits_then_claims_existing_service(self):
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "a-very-long-panel-password", "login_csrf": login_csrf}, allow_redirects=False)
+        csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
+        link = "https://example.com/sub/new-user"
+        response = await self.client.post("/services", headers=self.headers, data={
+            "csrf": csrf, "user": "@FutureUser", "subscription_url": link,
+        }, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        with panel.database() as db:
+            row = db.execute("SELECT username,label,subscription_url FROM pending_services").fetchone()
+        self.assertEqual(("futureuser", "Existing 3x-ui service", link), tuple(row))
+        response = await self.client.get("/services", headers=self.headers)
+        self.assertIn("Waiting for first /start", await response.text())
+        await Database(Path(self.temp.name) / "bot.db").upsert_user(777, "FutureUser", "New User")
+        claimed = await Database(Path(self.temp.name) / "bot.db").claim_pending_services(777, "FutureUser")
+        self.assertEqual(1, claimed)
+        with panel.database() as db:
+            self.assertEqual(0, db.execute("SELECT count(*) FROM pending_services").fetchone()[0])
+            self.assertEqual((777, link), tuple(db.execute("SELECT telegram_id,subscription_url FROM manual_services").fetchone()))
+        response = await self.client.post("/services", headers=self.headers, data={
+            "csrf": csrf, "user": "777", "subscription_url": link,
+        }, allow_redirects=False)
+        self.assertEqual(400, response.status)
