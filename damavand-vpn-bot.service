@@ -1,0 +1,25 @@
+[Unit]
+Description=Damavand VPN Telegram Bot
+After=network-online.target x-ui.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=damavand-bot
+Group=damavand-bot
+WorkingDirectory=/opt/damavand-vpn-bot
+EnvironmentFile=/etc/damavand-vpn-bot/bot.env
+ExecStart=/opt/damavand-vpn-bot/.venv/bin/python -m damavand_bot
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/damavand-vpn-bot
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
+
