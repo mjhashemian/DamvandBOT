@@ -4,6 +4,7 @@ import { LayoutDashboard, Users, Package, Receipt, Tags, BadgePercent, Settings,
 import { Button } from './components/ui/button'
 import { Sidebar, SidebarHeader, SidebarContent, SidebarFooter, SidebarMenuButton } from './components/ui/sidebar'
 import './index.css'
+import './secret.css'
 
 type Language = 'en' | 'fa'
 const routes = [
@@ -39,6 +40,7 @@ const translations: Record<string, string> = {
   'Saving changes the version and asks users to accept again.':'با ذخیره تغییرات، کاربران باید قوانین را دوباره بپذیرند.',
   'Service assignment saved':'سرویس اختصاص داده شد','Settings saved; bot restart requested':'تنظیمات ذخیره شد؛ ربات در حال راه‌اندازی مجدد است',
   'Saved — leave blank to keep current':'ذخیره شده؛ برای حفظ مقدار قبلی خالی بگذارید',
+  'Show':'نمایش','Hide':'پنهان‌سازی',
   'Payment receipts must be verified against your bank account before approval in Telegram.':'پیش از تأیید رسید در تلگرام، واریز را در حساب بانکی خود بررسی کنید.',
   'users':'کاربران','orders':'سفارش‌ها','services':'سرویس‌ها','trials':'آزمایشی‌ها','Receipts awaiting review':'رسیدهای در انتظار بررسی',
   'Latest 200 orders. Receipt approval and retries remain in the bot, where provisioning is transactional.':'۲۰۰ سفارش اخیر. تأیید رسید و تلاش مجدد برای ساخت سرویس همچنان در ربات انجام می‌شود.',
@@ -70,8 +72,54 @@ function translateContent(language: Language) {
     input.dataset.originalPlaceholder = original
     input.placeholder = language === 'fa' ? (translations[original] ?? original) : original
   })
+  main.querySelectorAll<HTMLButtonElement>('.reveal-secret').forEach(button => {
+    const visible = button.parentElement?.querySelector('input')?.type === 'text'
+    button.textContent = language === 'fa' ? (visible ? 'پنهان‌سازی' : 'نمایش') : (visible ? 'Hide' : 'Show')
+  })
   document.title = `${main.querySelector('h1')?.textContent ?? 'Damavand'} · Damavand Bot`
 }
+
+document.addEventListener('click', async event => {
+  const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('button.reveal-secret') : null
+  if (!button) return
+  const input = button.parentElement?.querySelector<HTMLInputElement>('input')
+  const csrf = button.closest('form')?.querySelector<HTMLInputElement>('input[name="csrf"]')?.value
+  if (!input || !csrf) return
+  if (input.type === 'text') {
+    input.type = 'password'
+    if (button.dataset.revealedFromServer === 'true') {
+      input.value = ''
+      delete button.dataset.revealedFromServer
+    }
+    button.textContent = document.documentElement.lang === 'fa' ? 'نمایش' : 'Show'
+    return
+  }
+  button.disabled = true
+  try {
+    if (!input.value) {
+      const response = await fetch('/settings/reveal', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf, key: button.dataset.secretKey || '' }),
+      })
+      if (!response.ok || !response.headers.get('Content-Type')?.startsWith('application/json')) throw new Error('Reveal failed')
+      const data: { value: string } = await response.json()
+      input.value = data.value
+      button.dataset.revealedFromServer = 'true'
+    }
+    input.type = 'text'
+    button.textContent = document.documentElement.lang === 'fa' ? 'پنهان‌سازی' : 'Hide'
+  } catch {
+    alert(document.documentElement.lang === 'fa' ? 'نمایش توکن ممکن نشد. دوباره وارد پنل شوید و تلاش کنید.' : 'Could not reveal the token. Sign in again and retry.')
+  } finally {
+    button.disabled = false
+  }
+})
+
+document.addEventListener('input', event => {
+  const input = event.target instanceof HTMLInputElement ? event.target : null
+  input?.closest('.secret-field')?.querySelector<HTMLButtonElement>('.reveal-secret')?.removeAttribute('data-revealed-from-server')
+})
 
 function App({ csrf }: { csrf: string }) {
   const [language, setLanguage] = useState<Language>(localStorage.getItem('damavand-language') === 'fa' ? 'fa' : 'en')

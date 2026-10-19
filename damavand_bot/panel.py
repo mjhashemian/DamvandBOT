@@ -30,7 +30,7 @@ LOGIN_CHALLENGES: dict[str, tuple[float, str]] = {}
 FAILURES: dict[str, list[float]] = {}
 COOKIE = "damavand_panel"
 LOGIN_COOKIE = "damavand_login"
-NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/terms"})
+NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/settings/reveal", "/terms"})
 SETTING_GROUPS = (
     ("Bot settings", ("BOT_TOKEN", "ADMIN_IDS", "SUPPORT_USERNAME", "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE")),
     ("Channel settings", ("CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL")),
@@ -82,7 +82,7 @@ def page(title: str, content: str, csrf: str = "", message: str = "") -> web.Res
     return web.Response(text=body, content_type="text/html", headers={
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-        "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     })
 
 
@@ -391,11 +391,15 @@ async def settings(request: web.Request):
                 field = f'<select name="{key}"><option value="true" {"selected" if data.get(key)=="true" else ""}>Enabled</option><option value="false" {"selected" if data.get(key)!="true" else ""}>Disabled</option></select>'
             elif key == "CARD_PAYMENT_INSTRUCTIONS":
                 field = f'<textarea name="{key}" maxlength="4096">{esc(data.get(key,""))}</textarea>'
+            elif key in SECRET_SETTINGS:
+                placeholder = "Saved — leave blank to keep current" if data.get(key) else ""
+                field = (
+                    f'<div class="secret-field"><input name="{key}" type="password" value="" '
+                    f'placeholder="{esc(placeholder)}" maxlength="4096" autocomplete="off">'
+                    f'<button type="button" class="reveal-secret" data-secret-key="{key}">Show</button></div>'
+                )
             else:
-                value = "" if key in SECRET_SETTINGS else esc(data.get(key, ""))
-                placeholder = "Saved — leave blank to keep current" if key in SECRET_SETTINGS and data.get(key) else ""
-                input_type = "password" if key in SECRET_SETTINGS else "text"
-                field = f'<input name="{key}" type="{input_type}" value="{value}" placeholder="{esc(placeholder)}" maxlength="4096" autocomplete="off">'
+                field = f'<input name="{key}" type="text" value="{esc(data.get(key, ""))}" maxlength="4096" autocomplete="off">'
             fields.append(f'<label>{esc(SETTING_LABELS[key])}{field}</label>')
         sections.append(f'<section class="card setting-group"><h2>{esc(title)}</h2><div class="setting-grid">{"".join(fields)}</div></section>')
     intro = "Enter the bot, channel, and 3x-ui details to finish setup." if not CONFIG_PATH.exists() else "Saved values remain here after refresh. Secret tokens are hidden; leave them blank to keep the saved value."
@@ -413,6 +417,21 @@ async def restart_bot():
             os.kill(pid, signal.SIGTERM)
     except (OSError, ValueError):
         pass
+
+
+async def reveal_setting(request: web.Request):
+    csrf = token(request)
+    posted = await form(request, csrf)
+    key = str(posted.get("key", ""))
+    if key not in SECRET_SETTINGS:
+        raise web.HTTPBadRequest(text="Unknown secret setting")
+    value = read_config().get(key, "")
+    with database() as db:
+        audit(db, "panel.secret_revealed", {"key": key})
+    return web.json_response({"value": value}, headers={
+        "Cache-Control": "no-store", "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+    })
 
 
 async def save_settings(request: web.Request):
@@ -477,6 +496,7 @@ def make_app() -> web.Application:
     app.router.add_get("/login", login)
     app.router.add_post("/login", login)
     app.router.add_post("/logout", logout)
+    app.router.add_post("/settings/reveal", reveal_setting)
     for path, handler in (("/", overview), ("/users", users), ("/services", manual_services), ("/orders", orders), ("/plans", plans), ("/discounts", discounts), ("/settings", settings), ("/terms", terms), ("/audit", audit_log)):
         app.router.add_get(path, handler)
     for path, handler in (("/plans", save_plan), ("/discounts", save_discount), ("/services", save_manual_service), ("/settings", save_settings), ("/terms", save_terms)):

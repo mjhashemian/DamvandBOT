@@ -78,6 +78,34 @@ class PanelTests(IsolatedAsyncioTestCase):
         self.assertEqual(200, response.status)
         self.assertNotIn(data["BOT_TOKEN"], await response.text())
 
+    async def test_saved_tokens_can_be_revealed_only_with_auth_and_csrf(self):
+        data = management.read_config()
+        data["BOT_TOKEN"] = "123456789:" + "A" * 35
+        data["XUI_API_TOKEN"] = "private-api-token"
+        management.write_config(data)
+        response = await self.client.post("/settings/reveal", headers=self.headers, data={"key": "BOT_TOKEN"}, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "a-very-long-panel-password", "login_csrf": login_csrf}, allow_redirects=False)
+        csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
+        response = await self.client.get("/settings", headers=self.headers)
+        body = await response.text()
+        self.assertIn('data-secret-key="BOT_TOKEN"', body)
+        self.assertIn('data-secret-key="XUI_API_TOKEN"', body)
+        self.assertNotIn(data["BOT_TOKEN"], body)
+        self.assertNotIn(data["XUI_API_TOKEN"], body)
+        response = await self.client.post("/settings/reveal", headers=self.headers, data={"key": "BOT_TOKEN", "csrf": "wrong"}, allow_redirects=False)
+        self.assertEqual(403, response.status)
+        response = await self.client.post("/settings/reveal", headers={**self.headers, "Origin": "https://attacker.example"}, data={"key": "BOT_TOKEN", "csrf": csrf}, allow_redirects=False)
+        self.assertEqual(403, response.status)
+        response = await self.client.post("/settings/reveal", headers=self.headers, data={"key": "ADMIN_IDS", "csrf": csrf}, allow_redirects=False)
+        self.assertEqual(400, response.status)
+        for key in ("BOT_TOKEN", "XUI_API_TOKEN"):
+            response = await self.client.post("/settings/reveal", headers=self.headers, data={"key": key, "csrf": csrf}, allow_redirects=False)
+            self.assertEqual(200, response.status)
+            self.assertEqual("no-store", response.headers["Cache-Control"])
+            self.assertEqual(data[key], (await response.json())["value"])
+
     async def test_public_https_origin_is_checked(self):
         panel.PANEL_DOMAIN_PATH.write_text("bot.example.com", encoding="ascii")
         headers = {

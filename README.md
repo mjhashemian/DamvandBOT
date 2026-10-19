@@ -54,8 +54,10 @@ orders and edits plans/prices, user- or plan-specific discounts, assigned
 subscription links for existing users, channel ID/join link/support, 3x-ui settings,
 payment method/card details, trial settings, and versioned Terms. The sidebar
 provides English and Persian navigation. Settings are grouped into Bot,
-Payment, Channel, and Trial sections and saved together; saved secret tokens
-stay masked and can be left blank to retain them. Assign an existing service
+Payment, Channel, and Trial sections and saved together; saved Bot and 3x-ui
+tokens stay masked until you click Show. The reveal request requires the active
+panel session and CSRF token; leave token fields blank to retain saved values.
+Assign an existing service
 by a user's numeric Telegram ID, even before they start the bot, or by an
 `@username` already known to the bot. Assigned links appear in My Services.
 Config
