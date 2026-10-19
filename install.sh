@@ -241,9 +241,12 @@ password_reset() {
   require_root
   check_checkout
   cd "$APP_DIR"
-  runuser -u "$SERVICE_USER" -- "$APP_DIR/.venv/bin/python" -m damavand_bot.setup password
-  rm -f -- "$BOOTSTRAP_PASSWORD_FILE"
+  local new_password
+  new_password=$(runuser -u "$SERVICE_USER" -- "$APP_DIR/.venv/bin/python" -m damavand_bot.setup generate)
+  (umask 077; printf '%s\n' "$new_password" > "$BOOTSTRAP_PASSWORD_FILE")
+  unset new_password
   systemctl restart damavand-vpn-panel.service
+  echo "A new panel password was generated. Retrieve it with: sudo cat $BOOTSTRAP_PASSWORD_FILE"
 }
 
 menu() {

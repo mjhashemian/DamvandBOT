@@ -33,7 +33,7 @@ After installation, `sudo damavand-bot` opens the menu:
 2. Update from GitHub (fast-forward only; refuses local checkout changes)
 3. Web panel access instructions
 4. Uninstall (private data preserved unless separately confirmed)
-5. Reset panel password
+5. Reset panel password (generates a new one in `/root/damavand-panel-password`)
 6. Obtain SSL for a subdomain and expose the panel
 7. Expose the panel using an existing HTTPS certificate
 

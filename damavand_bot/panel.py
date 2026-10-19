@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import logging
 import os
 import re
 import secrets
@@ -110,6 +111,10 @@ async def guard(request: web.Request, handler):
     if request.method == "POST":
         origin = request.headers.get("Origin")
         if origin and origin != f"{request.scheme}://{request.host}":
+            logging.warning(
+                "Rejected panel POST origin=%r expected=%r path=%r",
+                origin[:200], f"{request.scheme}://{request.host}", request.path[:100],
+            )
             raise web.HTTPForbidden(text="Invalid origin")
     return await handler(request)
 
