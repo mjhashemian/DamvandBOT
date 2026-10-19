@@ -63,6 +63,8 @@ the assignment waits in the panel and attaches automatically to the first
 Telegram account with that username to send `/start`. Once attached, it stays
 bound to that account's numeric ID and appears in My Services. Because Telegram
 usernames can change or be reassigned, use the numeric ID when available.
+Imported links are for viewing in My Services; assigning one does not modify
+the 3x-ui client or enable bot-managed renewal for it.
 Config
 changes restart the bot; plan and discount changes apply immediately. Receipt
 approval and failed-order retries remain in Telegram, where the existing

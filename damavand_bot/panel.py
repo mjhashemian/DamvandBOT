@@ -227,6 +227,7 @@ async def manual_services(request: web.Request):
         '<label>Service label (optional)<input name="label" maxlength="80" placeholder="Existing 3x-ui service"></label>'
         '<label>Subscription link<input name="subscription_url" type="url" maxlength="2048" required></label>'
         '<p class="muted">If the @username has not started the bot, this link waits here and attaches automatically on their first /start. Telegram usernames can change or be reassigned before then; use a numeric ID when available.</p>'
+        '<p class="muted">This adds the link to My Services. It does not edit the 3x-ui client or enable renewal for this imported service.</p>'
         '<button>Assign service</button></form></div>'
     )
     body = "".join(
