@@ -17,6 +17,7 @@ from pathlib import Path
 CONFIG_DIR = Path(os.environ.get("DAMAVAND_CONFIG_DIR", "/etc/damavand-vpn-bot"))
 CONFIG_PATH = CONFIG_DIR / "config.json"
 AUTH_PATH = CONFIG_DIR / "panel-auth.json"
+PANEL_DOMAIN_PATH = CONFIG_DIR / "panel-domain"
 
 DEFAULTS = {
     "BOT_TOKEN": "",

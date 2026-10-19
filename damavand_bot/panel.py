@@ -18,12 +18,13 @@ from urllib.parse import quote
 from aiohttp import web
 
 from .management import (
-    AUTH_PATH, CONFIG_DIR, SECRET_SETTINGS, SETTINGS,
+    AUTH_PATH, CONFIG_DIR, CONFIG_PATH, PANEL_DOMAIN_PATH,
+    SECRET_SETTINGS, SETTINGS,
     read_config, validate_settings, verify_panel_password, write_config,
 )
 
 SESSIONS: dict[str, tuple[float, str]] = {}
-FAILURES: list[float] = []
+FAILURES: dict[str, list[float]] = {}
 COOKIE = "damavand_panel"
 
 
@@ -99,11 +100,16 @@ async def form(request: web.Request, csrf: str):
 
 @web.middleware
 async def guard(request: web.Request, handler):
-    if request.host not in {"127.0.0.1:8765", "localhost:8765", "[::1]:8765"}:
-        raise web.HTTPForbidden(text="Use a localhost SSH tunnel")
+    domain = PANEL_DOMAIN_PATH.read_text(encoding="ascii").strip() if PANEL_DOMAIN_PATH.exists() else ""
+    backend_port = 8766 if domain else 8765
+    local_hosts = {f"127.0.0.1:{backend_port}", f"localhost:{backend_port}", f"[::1]:{backend_port}"}
+    if domain and request.remote == "127.0.0.1" and request.headers.get("X-Forwarded-Proto") == "https":
+        request = request.clone(scheme="https")
+    if request.host not in local_hosts and not (request.secure and request.host == f"{domain}:8765"):
+        raise web.HTTPForbidden(text="Invalid panel host or insecure connection")
     if request.method == "POST":
         origin = request.headers.get("Origin")
-        if origin and origin not in {"http://127.0.0.1:8765", "http://localhost:8765", "http://[::1]:8765"}:
+        if origin and origin != f"{request.scheme}://{request.host}":
             raise web.HTTPForbidden(text="Invalid origin")
     return await handler(request)
 
@@ -111,20 +117,20 @@ async def guard(request: web.Request, handler):
 async def login(request: web.Request):
     if request.method == "GET":
         return page("Sign in", '<div class="card"><form method="post"><label>Panel password</label><input type="password" name="password" autocomplete="current-password" required><p><button>Sign in</button></p></form></div>')
-    global FAILURES
     now = time.monotonic()
-    FAILURES = [at for at in FAILURES if now - at < 900]
-    if len(FAILURES) >= 10:
+    client_ip = request.headers.get("X-Real-IP", "") if request.remote == "127.0.0.1" and request.headers.get("X-Forwarded-Proto") == "https" else request.remote or "unknown"
+    attempts = FAILURES[client_ip] = [at for at in FAILURES.get(client_ip, []) if now - at < 900]
+    if len(attempts) >= 10:
         raise web.HTTPTooManyRequests(text="Too many sign-in attempts. Try again later.")
     data = await request.post()
     if not verify_panel_password(str(data.get("password", ""))):
-        FAILURES.append(now)
+        attempts.append(now)
         return page("Sign in", '<p class="error">Invalid password.</p><p><a href="/login">Try again</a></p>')
-    FAILURES.clear()
+    FAILURES.pop(client_ip, None)
     sid, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     SESSIONS[sid] = (now + 8 * 3600, csrf)
     response = web.HTTPSeeOther("/")
-    response.set_cookie(COOKIE, sid, httponly=True, samesite="Strict", path="/", max_age=8 * 3600)
+    response.set_cookie(COOKIE, sid, httponly=True, secure=request.secure, samesite="Strict", path="/", max_age=8 * 3600)
     raise response
 
 
@@ -139,6 +145,8 @@ async def logout(request: web.Request):
 
 async def overview(request: web.Request):
     csrf = token(request)
+    if not CONFIG_PATH.exists():
+        return page("Finish setup", '<div class="card"><p>The panel is ready. Add the Telegram bot token, admin IDs, channel, 3x-ui API and payment settings in <a href="/settings">Bot settings</a>. The bot will start after valid settings are saved.</p></div>', csrf)
     with database() as db:
         counts = {table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in ("users", "orders", "services", "trials")}
         pending = db.execute("SELECT count(*) FROM orders WHERE status='card_pending_review'").fetchone()[0]
@@ -250,7 +258,8 @@ async def settings(request: web.Request):
             placeholder = "Leave blank to keep current" if key in SECRET_SETTINGS else ""
             field = f'<input name="{key}" value="{value}" placeholder="{placeholder}" {"type=password" if key in SECRET_SETTINGS else ""} maxlength="4096">'
         fields += f'<label>{esc(key)}{field}</label>'
-    return page("Bot settings", f'<div class="card"><p class="muted">Saving restarts the bot. Secrets are never displayed. The panel remains available if the bot configuration fails.</p><form method="post" action="/settings"><input type="hidden" name="csrf" value="{esc(csrf)}">{fields}<p><button>Save and restart bot</button></p></form></div>', csrf, request.query.get("message", ""))
+    intro = "First-run setup: enter the Telegram bot token, at least one admin ID, channel, support username, and 3x-ui connection. No bot token is needed in the installer." if not CONFIG_PATH.exists() else "Saving restarts the bot. Secrets are never displayed. The panel remains available if the bot configuration fails."
+    return page("Bot settings", f'<div class="card"><p class="muted">{esc(intro)}</p><form method="post" action="/settings"><input type="hidden" name="csrf" value="{esc(csrf)}">{fields}<p><button>Save and restart bot</button></p></form></div>', csrf, request.query.get("message", ""))
 
 
 async def restart_bot():
@@ -334,7 +343,8 @@ def make_app() -> web.Application:
 def main() -> None:
     from .db import Database
     asyncio.run(Database(Path(read_config()["DB_PATH"])).initialize())
-    web.run_app(make_app(), host="127.0.0.1", port=8765, access_log=None)
+    port = 8766 if PANEL_DOMAIN_PATH.exists() else 8765
+    web.run_app(make_app(), host="127.0.0.1", port=port, access_log=None)
 
 
 if __name__ == "__main__":

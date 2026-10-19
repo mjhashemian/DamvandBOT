@@ -17,9 +17,11 @@ class PanelTests(IsolatedAsyncioTestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.config_patch = patch.object(management, "CONFIG_PATH", root / "config.json")
+        self.panel_config_patch = patch.object(panel, "CONFIG_PATH", root / "config.json")
+        self.defaults_patch = patch.object(management, "DEFAULTS", {**management.DEFAULTS, "DB_PATH": str(root / "bot.db"), "TERMS_FILE": str(root / "terms-fa.txt")})
         self.auth_patch = patch.object(management, "AUTH_PATH", root / "panel-auth.json")
         self.panel_auth_patch = patch.object(panel, "AUTH_PATH", root / "panel-auth.json")
-        for item in (self.config_patch, self.auth_patch, self.panel_auth_patch):
+        for item in (self.config_patch, self.panel_config_patch, self.defaults_patch, self.auth_patch, self.panel_auth_patch):
             item.start()
             self.addCleanup(item.stop)
         data = dict(management.DEFAULTS)
@@ -65,3 +67,26 @@ class PanelTests(IsolatedAsyncioTestCase):
         response = await self.client.get("/settings", headers=self.headers)
         self.assertEqual(200, response.status)
         self.assertNotIn(data["BOT_TOKEN"], await response.text())
+
+    async def test_first_run_settings_are_entered_in_panel(self):
+        management.CONFIG_PATH.unlink()
+        response = await self.client.post("/login", headers=self.headers, data={"password": "a-very-long-panel-password"}, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        sid = response.cookies[panel.COOKIE].value
+        csrf = panel.SESSIONS[sid][1]
+        response = await self.client.get("/", headers=self.headers)
+        self.assertIn("Finish setup", await response.text())
+        data = {key: value for key, value in management.DEFAULTS.items() if key in management.SETTINGS}
+        data.update({
+            "csrf": csrf,
+            "BOT_TOKEN": "123456789:" + "A" * 35,
+            "ADMIN_IDS": "123456789",
+            "CHANNEL_USERNAME": "@publicchannel",
+            "SUPPORT_USERNAME": "@supportuser",
+            "XUI_BASE_URL": "https://127.0.0.1:2053/panel",
+            "XUI_API_TOKEN": "secret",
+            "XUI_SUBSCRIPTION_BASE": "https://example.com/sub",
+        })
+        response = await self.client.post("/settings", headers=self.headers, data=data, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        self.assertEqual(data["BOT_TOKEN"], management.read_config()["BOT_TOKEN"])

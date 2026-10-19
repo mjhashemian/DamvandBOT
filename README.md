@@ -9,16 +9,19 @@ verify the deposit independently before approving it in Telegram.
 
 Review [`install.sh`](install.sh) before running remote code as root. It clones
 this repository, creates an unprivileged service account and virtual
-environment, and privately prompts for the bot token, Telegram admin IDs,
-channel/support usernames, 3x-ui URL/API token, subscription URL, and a panel
-password. It does not install or change 3x-ui.
+environment, and generates an initial panel password. Retrieve it on the VPS
+with `sudo cat /root/damavand-panel-password`, then change it with
+`sudo damavand-bot password` (which removes the bootstrap password file).
+After signing in,
+enter the bot token, Telegram admin IDs, channel/support details, 3x-ui
+URL/API token, and subscription URL in the panel. It does not install or change 3x-ui.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mjhashemian/DamvandBOT/main/install.sh | sudo bash -s -- install
 ```
 
-An interactive terminal, a BotFather token, a 3x-ui Clients API token, and a
-reachable 3x-ui API are required. Add the bot as a channel administrator so it
+A BotFather token, a 3x-ui Clients API token, and a reachable 3x-ui API are needed when you finish
+setup in the panel. Add the bot as a channel administrator so it
 can check membership. For private channels, enter its numeric `-100…` ID and
 an `https://t.me/+…` join link; for public channels, a username works, though
 the numeric ID is more reliable. Verify the 3x-ui TLS certificate before disabling TLS
@@ -31,14 +34,15 @@ After installation, `sudo damavand-bot` opens the menu:
 3. Web panel access instructions
 4. Uninstall (private data preserved unless separately confirmed)
 5. Reset panel password
+6. Expose the panel using an existing HTTPS certificate
 
 The same actions are available as `sudo damavand-bot update`, `panel`,
 `uninstall`, and `password`.
 
 ## Management panel
 
-The panel listens on `127.0.0.1:8765` only; no firewall port is opened. From
-your computer, forward it over SSH:
+The panel initially listens on `127.0.0.1:8765` only. From your computer,
+forward it over SSH:
 
 ```bash
 ssh -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
@@ -53,8 +57,25 @@ provisioning flow handles them.
 
 The panel has a password, rate-limited sign-in, CSRF tokens, restrictive
 browser headers, a local-only listener, and no root privileges. Treat its
-password and your SSH account as administrator credentials. Do not expose port
-8765 publicly. Rotate any token that was previously shared or published.
+password and your SSH account as administrator credentials. Never expose the
+Python backend or send credentials over public HTTP. Rotate any token that was
+previously shared or published.
+
+To expose it through a domain whose existing certificate already covers that
+name, run this on the VPS (the certificate and private key stay root-readable;
+the bot process never receives the key):
+
+```bash
+sudo damavand-bot expose-domain YOUR_DOMAIN /path/to/fullchain.pem /path/to/privkey.pem
+```
+
+The command verifies the certificate and matching key, installs a dedicated
+nginx reverse proxy on HTTPS port 8765, and keeps the bot panel bound to
+`127.0.0.1:8766`. Open only TCP 8765 in your cloud firewall. Nginx reloads
+daily to pick up certificate renewals; your existing certificate renewal job
+must still continue to run. A separate bot subdomain is preferable to using
+the exact x-ui hostname because browser cookies are shared across ports on
+one hostname. Plain `http://` is not supported for public access.
 
 ## Files and lifecycle
 
