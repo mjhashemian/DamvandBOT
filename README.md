@@ -34,7 +34,8 @@ After installation, `sudo damavand-bot` opens the menu:
 3. Web panel access instructions
 4. Uninstall (private data preserved unless separately confirmed)
 5. Reset panel password
-6. Expose the panel using an existing HTTPS certificate
+6. Obtain SSL for a subdomain and expose the panel
+7. Expose the panel using an existing HTTPS certificate
 
 The same actions are available as `sudo damavand-bot update`, `panel`,
 `uninstall`, and `password`.
@@ -61,9 +62,25 @@ password and your SSH account as administrator credentials. Never expose the
 Python backend or send credentials over public HTTP. Rotate any token that was
 previously shared or published.
 
-To expose it through a domain whose existing certificate already covers that
-name, run this on the VPS (the certificate and private key stay root-readable;
-the bot process never receives the key):
+For direct HTTPS, first create a DNS-only A record for a subdomain that points
+to your VPS. Do not create a Cloudflare Tunnel or provide a DNS API key. Open
+inbound TCP 80 for certificate validation and renewal, and TCP 8765 for the
+panel; keep the VPN and x-ui ports unchanged. The installer asks for the
+subdomain. If DNS is not ready, press Enter and set it up later with:
+
+```bash
+sudo damavand-bot setup-domain bot.example.com
+```
+
+Certbot obtains a certificate for that exact name using port 80. The panel
+then opens at `https://bot.example.com:8765`. Certbot handles renewals and
+the panel's nginx reload timer picks them up. Port 80 must remain reachable
+for HTTP-01 renewals. If your DNS provider offers a proxy, use DNS-only mode
+because proxying may not support port 8765.
+
+Alternatively, if you already have a certificate covering the domain, use it
+directly (the certificate and private key stay root-readable; the bot process
+never receives the key):
 
 ```bash
 sudo damavand-bot expose-domain YOUR_DOMAIN /path/to/fullchain.pem /path/to/privkey.pem
@@ -71,11 +88,11 @@ sudo damavand-bot expose-domain YOUR_DOMAIN /path/to/fullchain.pem /path/to/priv
 
 The command verifies the certificate and matching key, installs a dedicated
 nginx reverse proxy on HTTPS port 8765, and keeps the bot panel bound to
-`127.0.0.1:8766`. Open only TCP 8765 in your cloud firewall. Nginx reloads
-daily to pick up certificate renewals; your existing certificate renewal job
-must still continue to run. A separate bot subdomain is preferable to using
-the exact x-ui hostname because browser cookies are shared across ports on
-one hostname. Plain `http://` is not supported for public access.
+`127.0.0.1:8766`. Nginx reloads daily to pick up certificate renewals; your
+existing certificate renewal job must still continue to run. A separate bot
+subdomain is preferable to using the exact x-ui hostname because browser
+cookies are shared across ports on one hostname. Plain public `http://` is
+not supported because it would expose administrator credentials and bot tokens.
 
 ## Files and lifecycle
 

@@ -70,6 +70,13 @@ install_bot() {
   systemctl daemon-reload
   systemctl enable --now damavand-vpn-bot.service damavand-vpn-panel.service
   echo 'Installed. Complete bot setup in the web panel.'
+  local domain="${1:-}"
+  if [[ -z "$domain" && -r /dev/tty ]]; then
+    read -r -p 'Panel subdomain (already pointed to this server; Enter to set up later): ' domain </dev/tty || true
+  fi
+  if [[ -n "$domain" ]]; then
+    setup_domain "$domain"
+  fi
   show_panel
 }
 
@@ -144,10 +151,8 @@ server {
         proxy_read_timeout 30s;
     }
 }
+
 EOF
-  if [[ -L /etc/nginx/sites-enabled/default && "$(readlink /etc/nginx/sites-enabled/default)" == '/etc/nginx/sites-available/default' ]]; then
-    unlink /etc/nginx/sites-enabled/default
-  fi
   ln -sfn "$NGINX_SITE" "$NGINX_LINK"
   nginx -t
   printf '%s\n' "$domain" > "$PANEL_DOMAIN_FILE"
@@ -178,6 +183,25 @@ EOF
   systemctl enable --now nginx.service
   systemctl reload nginx.service
   show_panel
+}
+
+setup_domain() {
+  require_root
+  check_checkout
+  local domain="${1,,}" cert key
+  if [[ ! "$domain" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ || ${#domain} -gt 253 ]]; then
+    echo 'Enter a valid public subdomain.' >&2; return 1
+  fi
+  echo "Make sure $domain has a DNS A record pointing to this server, and inbound TCP port 80 is open for certificate validation."
+  if ss -ltn '( sport = :80 )' | grep -q LISTEN; then
+    echo 'TCP port 80 is already in use; free it before requesting a certificate.' >&2; return 1
+  fi
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends certbot
+  certbot certonly --standalone --non-interactive --agree-tos --no-eff-email --register-unsafely-without-email --preferred-challenges http -d "$domain"
+  cert="/etc/letsencrypt/live/$domain/fullchain.pem"
+  key="/etc/letsencrypt/live/$domain/privkey.pem"
+  expose_domain "$domain" "$cert" "$key"
+  echo 'Certbot renews the certificate automatically; the panel reload timer picks up renewals.'
 }
 
 uninstall_bot() {
@@ -228,20 +252,23 @@ menu() {
   echo '3) Web panel access'
   echo '4) Uninstall'
   echo '5) Reset panel password'
-  echo '6) Expose panel on an existing TLS domain'
+  echo '6) Obtain SSL for a subdomain and expose panel'
+  echo '7) Expose panel with an existing certificate'
   local answer
-  read -r -p 'Choose 1-6: ' answer
+  read -r -p 'Choose 1-7: ' answer
   case "$answer" in
     1) install_bot ;; 2) update_bot ;; 3) show_panel ;;
     4) uninstall_bot ;; 5) password_reset ;;
-    6) echo 'Run: sudo damavand-bot expose-domain DOMAIN FULLCHAIN_PATH PRIVATE_KEY_PATH' ;;
+    6) read -r -p 'Subdomain with an A record pointing to this server: ' answer; setup_domain "$answer" ;;
+    7) echo 'Run: sudo damavand-bot expose-domain DOMAIN FULLCHAIN_PATH PRIVATE_KEY_PATH' ;;
     *) echo 'Invalid choice' >&2; exit 1 ;;
   esac
 }
 
 case "${1:-menu}" in
-  install) install_bot ;; update) update_bot ;; panel) show_panel ;;
+  install) install_bot "${2:-}" ;; update) update_bot ;; panel) show_panel ;;
+  setup-domain) setup_domain "${2:-}" ;;
   expose-domain) expose_domain "${2:-}" "${3:-}" "${4:-}" ;;
   uninstall) uninstall_bot ;; password) password_reset ;; menu) menu ;;
-  *) echo 'Usage: damavand-bot [install|update|panel|uninstall|password|expose-domain DOMAIN CERT KEY]' >&2; exit 1 ;;
+  *) echo 'Usage: damavand-bot [install [DOMAIN]|update|panel|uninstall|password|setup-domain DOMAIN|expose-domain DOMAIN CERT KEY]' >&2; exit 1 ;;
 esac
