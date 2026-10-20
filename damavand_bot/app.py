@@ -67,7 +67,7 @@ STARTUP_WELCOME = (
     "سلام <b>{name}</b> عزیز! 🌄\n\n"
     "به <b>دماوند VPN</b> خوش اومدی. اینجا می‌تونی سرویس مناسب خودت رو انتخاب کنی، "
     "وضعیت سرویس‌هات رو ببینی و هر زمان لازم بود تمدیدشون کنی.\n\n"
-    "برای شروع، فقط عضویت در کانال و قوانین رو تأیید کن؛ بعد همه‌چیز از منوی پایین در دسترسته. 🤝"
+    "برای شروع، {requirements}؛ بعد همه‌چیز از منوی پایین در دسترسته. 🤝"
 )
 
 BUY_INTRO = (
@@ -105,6 +105,8 @@ class App:
         return user_id in self.config.admin_ids
 
     async def is_channel_member(self, user_id: int) -> bool:
+        if not self.config.channel_join_required:
+            return True
         if self.is_admin(user_id):
             return True
         try:
@@ -156,7 +158,7 @@ class App:
 
     async def show_welcome(self, message: Message) -> None:
         name = html.escape(message.from_user.first_name or "دوست")
-        await message.answer(WELCOME.format(name=name), reply_markup=main_menu(self.is_admin(message.from_user.id)))
+        await message.answer(WELCOME.format(name=name), reply_markup=main_menu(self.is_admin(message.from_user.id), self.config.channel_join_required))
 
     async def notify_admins(self, text: str) -> None:
         for admin_id in self.config.admin_ids:
@@ -369,7 +371,8 @@ async def start(message: Message) -> None:
     await app.db.upsert_user(user.id, user.username, user.full_name)
     claimed_services = await app.db.claim_pending_services(user.id, user.username)
     if is_new_user:
-        await message.answer(STARTUP_WELCOME.format(name=html.escape(user.full_name)))
+        requirements = "عضویت در کانال و قوانین رو تأیید کن" if app.config.channel_join_required else "قوانین رو تأیید کن"
+        await message.answer(STARTUP_WELCOME.format(name=html.escape(user.full_name), requirements=requirements))
     if not await app.gate(message):
         return
     await app.show_welcome(message)
@@ -383,6 +386,13 @@ async def start(message: Message) -> None:
 async def check_join(callback: CallbackQuery) -> None:
     app = _app(callback)
     await callback.answer()
+    if not app.config.channel_join_required:
+        if await app.gate(callback):
+            await callback.message.answer(
+                WELCOME.format(name=html.escape(callback.from_user.first_name or "دوست")),
+                reply_markup=main_menu(app.is_admin(callback.from_user.id), False),
+            )
+        return
     try:
         is_member = await app.is_channel_member(callback.from_user.id)
     except ChannelMembershipUnavailable:
@@ -424,7 +434,7 @@ async def accept_terms(callback: CallbackQuery) -> None:
     await callback.answer("قوانین پذیرفته شد ✅")
     await callback.message.answer(
         WELCOME.format(name=html.escape(callback.from_user.first_name or "دوست")),
-        reply_markup=main_menu(app.is_admin(callback.from_user.id)),
+        reply_markup=main_menu(app.is_admin(callback.from_user.id), app.config.channel_join_required),
     )
 
 
@@ -497,7 +507,7 @@ async def select_plan(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.message.answer(
             "یک نام دلخواه برای سرویس وارد کن.\n\n"
             "نام باید ۳ تا ۳۲ کاراکتر، انگلیسی و شامل حروف، عدد، <code>_</code> یا <code>-</code> باشد.\n"
-            "مثال: <code>damavand_mj</code>"
+            "مثال: <code>my_panel</code>"
         )
         return
     await callback.answer()
@@ -1056,6 +1066,9 @@ async def support(message: Message) -> None:
 @router.message(F.text == CHANNEL)
 async def channel(message: Message) -> None:
     app = _app(message)
+    if not app.config.channel_join_required:
+        await message.answer("الزام عضویت در کانال غیرفعال است.")
+        return
     await message.answer(
         f"کانال رسمی دماوند VPN:\n{app.config.channel_username or app.config.channel_url}",
         reply_markup=InlineKeyboardMarkup(

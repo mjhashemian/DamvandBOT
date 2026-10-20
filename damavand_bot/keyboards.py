@@ -20,12 +20,14 @@ CHANNEL = "📢 کانال ما"
 DISCOUNTS = "🎟 مدیریت کد تخفیف"
 
 
-def main_menu(admin: bool = False) -> ReplyKeyboardMarkup:
+def main_menu(admin: bool = False, channel_enabled: bool = True) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text=BUY), KeyboardButton(text=RENEW)],
         [KeyboardButton(text=MY_SERVICES), KeyboardButton(text=TRIAL)],
-        [KeyboardButton(text=SUPPORT), KeyboardButton(text=CHANNEL)],
+        [KeyboardButton(text=SUPPORT)],
     ]
+    if channel_enabled:
+        rows[-1].append(KeyboardButton(text=CHANNEL))
     if admin:
         rows.append([KeyboardButton(text=DISCOUNTS)])
     return ReplyKeyboardMarkup(

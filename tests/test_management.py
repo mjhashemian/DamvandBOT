@@ -68,6 +68,27 @@ class ManagementTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Telegram channel link"):
             management.validate_settings(config)
 
+    def test_channel_requirement_can_be_disabled_without_channel_details(self):
+        config = dict(management.DEFAULTS)
+        config.update({
+            "BOT_TOKEN": "123456789:" + "A" * 35,
+            "ADMIN_IDS": "123456789",
+            "CHANNEL_JOIN_REQUIRED": "false",
+            "SUPPORT_USERNAME": "@supportuser",
+            "XUI_BASE_URL": "https://127.0.0.1:2053/panel",
+            "XUI_API_TOKEN": "secret",
+            "XUI_SUBSCRIPTION_BASE": "https://example.com/sub",
+        })
+        management.validate_settings(config)
+        management.write_config(config)
+        self.assertEqual("false", management.read_config()["CHANNEL_JOIN_REQUIRED"])
+        config["CHANNEL_JOIN_REQUIRED"] = "true"
+        with self.assertRaisesRegex(ValueError, "CHANNEL_ID or CHANNEL_USERNAME"):
+            management.validate_settings(config)
+        config["CHANNEL_JOIN_REQUIRED"] = "invalid"
+        with self.assertRaisesRegex(ValueError, "boolean"):
+            management.validate_settings(config)
+
     def test_password_hash_and_check(self):
         management.set_panel_password("a-very-long-panel-password")
         record = json.loads(management.AUTH_PATH.read_text(encoding="utf-8"))

@@ -4,8 +4,26 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from damavand_bot.app import _finish_discount, _provision_order, _send_credentials, start
+from damavand_bot.app import App, _finish_discount, _provision_order, _send_credentials, start
 from damavand_bot.db import Database
+from damavand_bot.keyboards import CHANNEL, main_menu
+
+
+class ChannelRequirementTests(IsolatedAsyncioTestCase):
+    async def test_disabled_requirement_skips_telegram_and_channel_menu(self):
+        config = SimpleNamespace(channel_join_required=False, admin_ids=frozenset(), channel_id="", channel_username="")
+        bot = SimpleNamespace(get_chat_member=AsyncMock(side_effect=AssertionError("should not call Telegram")))
+        app = App(config, bot, None, None)
+        self.assertTrue(await app.is_channel_member(123))
+        bot.get_chat_member.assert_not_awaited()
+        self.assertNotIn(CHANNEL, [button.text for row in main_menu(channel_enabled=False).keyboard for button in row])
+
+    async def test_enabled_requirement_checks_telegram(self):
+        config = SimpleNamespace(channel_join_required=True, admin_ids=frozenset(), channel_id="", channel_username="@publicchannel")
+        bot = SimpleNamespace(get_chat_member=AsyncMock(return_value=SimpleNamespace(status="left")))
+        app = App(config, bot, None, None)
+        self.assertFalse(await app.is_channel_member(123))
+        bot.get_chat_member.assert_awaited_once_with("@publicchannel", 123)
 
 
 class DatabaseTests(IsolatedAsyncioTestCase):
@@ -168,7 +186,7 @@ class DatabaseTests(IsolatedAsyncioTestCase):
             await db.commit()
         user = SimpleNamespace(id=777, username="NewTelegramUser", full_name="New User")
         message = SimpleNamespace(from_user=user, answer=AsyncMock())
-        app = SimpleNamespace(db=self.db, gate=AsyncMock(return_value=True), show_welcome=AsyncMock())
+        app = SimpleNamespace(db=self.db, config=SimpleNamespace(channel_join_required=True), gate=AsyncMock(return_value=True), show_welcome=AsyncMock())
         with patch("damavand_bot.app.runtime_app", app):
             await start(message)
         self.assertEqual(1, len(await self.db.list_manual_services(777)))

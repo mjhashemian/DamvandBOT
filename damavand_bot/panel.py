@@ -33,7 +33,7 @@ LOGIN_COOKIE = "damavand_login"
 NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/settings/reveal", "/terms"})
 SETTING_GROUPS = (
     ("Bot settings", ("BOT_TOKEN", "ADMIN_IDS", "SUPPORT_USERNAME", "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE")),
-    ("Channel settings", ("CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL")),
+    ("Channel settings", ("CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL")),
     ("Payment settings", ("CARD_PAYMENT_ENABLED", "CARD_PAYMENT_CARD_NUMBER", "CARD_PAYMENT_HOLDER", "CARD_PAYMENT_INSTRUCTIONS")),
     ("Trial settings", ("TRIAL_ENABLED", "TRIAL_MB", "TRIAL_DAYS")),
 )
@@ -41,7 +41,7 @@ SETTING_LABELS = {
     "BOT_TOKEN": "Bot Token", "ADMIN_IDS": "Admin Telegram IDs", "SUPPORT_USERNAME": "Support username",
     "XUI_BASE_URL": "3x-ui panel URL", "XUI_API_TOKEN": "3x-ui API token",
     "XUI_SUBSCRIPTION_BASE": "Subscription base URL", "CHANNEL_USERNAME": "Channel username",
-    "CHANNEL_ID": "Channel ID", "CHANNEL_JOIN_URL": "Channel join link",
+    "CHANNEL_ID": "Channel ID", "CHANNEL_JOIN_URL": "Channel join link", "CHANNEL_JOIN_REQUIRED": "Require channel membership",
     "CARD_PAYMENT_ENABLED": "Card-to-card payment", "CARD_PAYMENT_CARD_NUMBER": "Card number",
     "CARD_PAYMENT_HOLDER": "Cardholder name", "CARD_PAYMENT_INSTRUCTIONS": "Payment instructions",
     "TRIAL_ENABLED": "Free trial", "TRIAL_MB": "Trial traffic (MB)", "TRIAL_DAYS": "Trial duration (days)",
@@ -349,7 +349,7 @@ async def plans(request: web.Request):
             ("toman_price", "Toman", 0), ("stars_price", "Stars", 0),
         ))
         forms += f'<div class="card"><form method="post" action="/plans"><input type="hidden" name="csrf" value="{esc(csrf)}"><input type="hidden" name="code" value="{esc(row["code"])}"><h2>{esc(row["code"])}</h2><label>Persian title<input name="title_fa" value="{esc(row["title_fa"])}" maxlength="100" required></label><div class="row">{fields}<label>Enabled<select name="enabled"><option value="1" {"selected" if row["enabled"] else ""}>Yes</option><option value="0" {"selected" if not row["enabled"] else ""}>No</option></select></label></div><p><button>Save plan</button></p></form></div>'
-    forms += f'<div class="card"><h2>Add plan</h2><form method="post" action="/plans"><input type="hidden" name="csrf" value="{esc(csrf)}"><label>Code<input name="code" pattern="[a-z0-9_-]{{2,32}}" required></label><label>Persian title<input name="title_fa" maxlength="100" required></label><div class="row">' + "".join(f'<label>{label}<input name="{key}" type="number" min="{minimum}" required></label>' for key,label,minimum in (("traffic_gb","Traffic GB",1),("duration_days","Days",1),("toman_price","Toman",0),("stars_price","Stars",0))) + '</div><button>Add plan</button></form></div>'
+    forms += f'<div class="card"><h2>Add plan</h2><form method="post" action="/plans"><input type="hidden" name="csrf" value="{esc(csrf)}"><label>Code<input name="code" pattern="[a-z0-9_-]{{2,32}}" placeholder="my_panel" required></label><label>Persian title<input name="title_fa" maxlength="100" required></label><div class="row">' + "".join(f'<label>{label}<input name="{key}" type="number" min="{minimum}" required></label>' for key,label,minimum in (("traffic_gb","Traffic GB",1),("duration_days","Days",1),("toman_price","Toman",0),("stars_price","Stars",0))) + '</div><button>Add plan</button></form></div>'
     return page("Plans", forms, csrf, request.query.get("message", ""))
 
 
@@ -438,7 +438,7 @@ async def settings(request: web.Request):
     for title, keys in SETTING_GROUPS:
         fields = []
         for key in keys:
-            if key in {"CARD_PAYMENT_ENABLED", "TRIAL_ENABLED"}:
+            if key in {"CARD_PAYMENT_ENABLED", "TRIAL_ENABLED", "CHANNEL_JOIN_REQUIRED"}:
                 field = f'<select name="{key}"><option value="true" {"selected" if data.get(key)=="true" else ""}>Enabled</option><option value="false" {"selected" if data.get(key)!="true" else ""}>Disabled</option></select>'
             elif key == "CARD_PAYMENT_INSTRUCTIONS":
                 field = f'<textarea name="{key}" maxlength="4096">{esc(data.get(key,""))}</textarea>'
@@ -453,7 +453,7 @@ async def settings(request: web.Request):
                 field = f'<input name="{key}" type="text" value="{esc(data.get(key, ""))}" maxlength="4096" autocomplete="off">'
             fields.append(f'<label>{esc(SETTING_LABELS[key])}{field}</label>')
         sections.append(f'<section class="card setting-group"><h2>{esc(title)}</h2><div class="setting-grid">{"".join(fields)}</div></section>')
-    intro = "Enter the bot, channel, and 3x-ui details to finish setup." if not CONFIG_PATH.exists() else "Saved values remain here after refresh. Secret tokens are hidden; leave them blank to keep the saved value."
+    intro = "Enter the bot and 3x-ui details to finish setup. Channel membership is optional." if not CONFIG_PATH.exists() else "Saved values remain here after refresh. Secret tokens are hidden; leave them blank to keep the saved value."
     body = f'<p class="muted">{esc(intro)}</p><form method="post" action="/settings"><input type="hidden" name="csrf" value="{esc(csrf)}">{"".join(sections)}<div class="save-bar"><button>Save all settings</button></div></form>'
     return page("Settings", body, csrf, request.query.get("message", ""))
 

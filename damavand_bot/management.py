@@ -25,6 +25,7 @@ DEFAULTS = {
     "CHANNEL_USERNAME": "",
     "CHANNEL_ID": "",
     "CHANNEL_JOIN_URL": "",
+    "CHANNEL_JOIN_REQUIRED": "true",
     "SUPPORT_USERNAME": "",
     "DB_PATH": "/var/lib/damavand-vpn-bot/bot.db",
     "TERMS_FILE": "/etc/damavand-vpn-bot/terms-fa.txt",
@@ -44,7 +45,7 @@ DEFAULTS = {
     "TRIAL_DAYS": "1",
 }
 SETTINGS = (
-    "BOT_TOKEN", "ADMIN_IDS", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL", "SUPPORT_USERNAME",
+    "BOT_TOKEN", "ADMIN_IDS", "CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL", "SUPPORT_USERNAME",
     "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE",
     "CARD_PAYMENT_ENABLED", "CARD_PAYMENT_CARD_NUMBER",
     "CARD_PAYMENT_HOLDER", "CARD_PAYMENT_INSTRUCTIONS",
@@ -96,9 +97,9 @@ def validate_settings(data: dict[str, str]) -> None:
         raise ValueError("CHANNEL_USERNAME must be a public @channel username")
     if data["CHANNEL_ID"] and not re.fullmatch(r"-100\d{5,20}", data["CHANNEL_ID"]):
         raise ValueError("CHANNEL_ID must be a numeric -100... channel ID")
-    if not (data["CHANNEL_ID"] or data["CHANNEL_USERNAME"]):
+    if data["CHANNEL_JOIN_REQUIRED"] == "true" and not (data["CHANNEL_ID"] or data["CHANNEL_USERNAME"]):
         raise ValueError("Set CHANNEL_ID or CHANNEL_USERNAME")
-    if data["CHANNEL_ID"] and not data["CHANNEL_USERNAME"] and not data["CHANNEL_JOIN_URL"]:
+    if data["CHANNEL_JOIN_REQUIRED"] == "true" and data["CHANNEL_ID"] and not data["CHANNEL_USERNAME"] and not data["CHANNEL_JOIN_URL"]:
         raise ValueError("A private channel ID also needs CHANNEL_JOIN_URL")
     if data["CHANNEL_JOIN_URL"]:
         join_url = urlsplit(data["CHANNEL_JOIN_URL"])
@@ -114,7 +115,7 @@ def validate_settings(data: dict[str, str]) -> None:
             raise ValueError(f"{key} must use HTTPS off localhost")
     if not data["XUI_API_TOKEN"]:
         raise ValueError("XUI_API_TOKEN is required")
-    if any(data[key] not in ("true", "false") for key in ("XUI_VERIFY_SSL", "DEMO_MODE", "CARD_PAYMENT_ENABLED", "TRIAL_ENABLED")):
+    if any(data[key] not in ("true", "false") for key in ("XUI_VERIFY_SSL", "DEMO_MODE", "CHANNEL_JOIN_REQUIRED", "CARD_PAYMENT_ENABLED", "TRIAL_ENABLED")):
         raise ValueError("Invalid boolean setting")
     if not data["TRIAL_MB"].isdigit() or not 1 <= int(data["TRIAL_MB"]) <= 102400:
         raise ValueError("TRIAL_MB must be 1–102400")

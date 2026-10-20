@@ -26,6 +26,7 @@ class Config:
     channel_username: str
     channel_id: str
     channel_join_url: str
+    channel_join_required: bool
     support_username: str
     db_path: Path
     terms_file: Path
@@ -69,6 +70,7 @@ class Config:
             channel_username=os.getenv("CHANNEL_USERNAME", "").strip(),
             channel_id=os.getenv("CHANNEL_ID", "").strip(),
             channel_join_url=os.getenv("CHANNEL_JOIN_URL", "").strip(),
+            channel_join_required=_bool("CHANNEL_JOIN_REQUIRED", True),
             support_username=os.getenv("SUPPORT_USERNAME", "").strip(),
             db_path=Path(os.getenv("DB_PATH", "/var/lib/damavand-vpn-bot/bot.db")),
             terms_file=Path(os.getenv("TERMS_FILE", "/etc/damavand-vpn-bot/terms-fa.txt")),

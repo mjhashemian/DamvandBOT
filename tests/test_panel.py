@@ -153,7 +153,7 @@ class PanelTests(IsolatedAsyncioTestCase):
         csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
         response = await self.client.get("/settings", headers=self.headers)
         body = await response.text()
-        for label in ("Bot settings", "Payment settings", "Channel settings", "Trial settings", "Bot Token", "Save all settings"):
+        for label in ("Bot settings", "Payment settings", "Channel settings", "Trial settings", "Bot Token", "Require channel membership", "Save all settings"):
             self.assertIn(label, body)
         for hidden in ("XUI_VERIFY_SSL", "XUI_INBOUND_IDS", "DEMO_MODE"):
             self.assertNotIn(hidden, body)
@@ -172,6 +172,9 @@ class PanelTests(IsolatedAsyncioTestCase):
         self.assertEqual(303, response.status)
         stored = management.read_config()
         self.assertEqual((token, "800", "2"), (stored["BOT_TOKEN"], stored["TRIAL_MB"], stored["TRIAL_DAYS"]))
+        response = await self.client.post("/settings", headers=self.headers, data={"csrf": csrf, "CHANNEL_JOIN_REQUIRED": "false"}, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        self.assertEqual("false", management.read_config()["CHANNEL_JOIN_REQUIRED"])
 
     async def test_assign_service_to_known_username(self):
         with panel.database() as db:

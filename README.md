@@ -1,6 +1,6 @@
 # Damavand Bot
 
-Persian Telegram storefront for 3x-ui. It manages channel and Terms checks,
+Persian Telegram storefront for 3x-ui. It manages optional channel membership and Terms checks,
 plans, monthly trials, renewals, discounts, Telegram Stars, and optional
 card-receipt orders. A card receipt is **not** proof of payment: an admin must
 verify the deposit independently before approving it in Telegram.
@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/mjhashemian/DamvandBOT/main/install
 ```
 
 A BotFather token, a 3x-ui Clients API token, and a reachable 3x-ui API are needed when you finish
-setup in the panel. Add the bot as a channel administrator so it
+setup in the panel. If channel membership is required, add the bot as a channel administrator so it
 can check membership. For private channels, enter its numeric `-100…` ID and
 an `https://t.me/+…` join link; for public channels, a username works, though
 the numeric ID is more reliable. The bot verifies the 3x-ui TLS certificate;
@@ -54,7 +54,9 @@ orders and edits plans/prices, user- or plan-specific discounts, assigned
 subscription links for existing users, channel ID/join link/support, 3x-ui settings,
 payment method/card details, trial settings, and versioned Terms. The sidebar
 provides English and Persian navigation. Settings are grouped into Bot,
-Payment, Channel, and Trial sections and saved together; saved Bot and 3x-ui
+Payment, Channel, and Trial sections and saved together. Channel membership
+is required by default; turn it off in Channel settings to let users proceed
+without joining or configuring a channel. Saved Bot and 3x-ui
 tokens stay masked until you click Show. The reveal request requires the active
 panel session and CSRF token; leave token fields blank to retain saved values.
 Assign an existing service by a user's numeric Telegram ID, even before they
