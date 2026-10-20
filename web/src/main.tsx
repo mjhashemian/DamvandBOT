@@ -24,6 +24,8 @@ const translations: Record<string, string> = {
   'Overview':'نمای کلی','Users':'کاربران','Assigned services':'سرویس‌های اختصاصی','Orders':'سفارش‌ها','Plans':'پلن‌ها','Discounts':'تخفیف‌ها','Bot buttons':'دکمه‌های ربات','Settings':'تنظیمات','Terms and conditions':'قوانین و شرایط','Audit':'گزارش فعالیت',
   'Sign in':'ورود','Panel password':'رمز پنل','Invalid password.':'رمز نادرست است.','Try again':'دوباره تلاش کنید',
   'Bot settings':'تنظیمات ربات','Payment settings':'تنظیمات پرداخت','Channel settings':'تنظیمات کانال','Trial settings':'تنظیمات سرویس آزمایشی',
+  'Welcome settings':'تنظیمات خوش‌آمدگویی','Before-START description':'توضیحات پیش از شروع','Welcome message':'پیام خوش‌آمدگویی',
+  'The description appears before START. The banner and welcome message are sent after /start. Use {name} and {requirements} as optional placeholders in the welcome message.':'توضیحات پیش از START نمایش داده می‌شود. بنر و پیام خوش‌آمدگویی بعد از /start ارسال می‌شوند. در پیام می‌توانید از {name} و {requirements} استفاده کنید.',
   'Bot Token':'توکن ربات','Admin Telegram IDs':'شناسه‌های تلگرام مدیران','Support username':'نام کاربری پشتیبانی','3x-ui panel URL':'نشانی پنل 3x-ui','3x-ui API token':'توکن API پنل 3x-ui','Subscription base URL':'نشانی پایه اشتراک',
   'Channel username':'نام کاربری کانال','Channel ID':'شناسه کانال','Channel join link':'لینک عضویت کانال','Require channel membership':'الزام عضویت در کانال',
   'Card-to-card payment':'پرداخت کارت‌به‌کارت','Card number':'شماره کارت','Cardholder name':'نام صاحب کارت','Payment instructions':'راهنمای پرداخت',

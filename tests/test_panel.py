@@ -154,7 +154,7 @@ class PanelTests(IsolatedAsyncioTestCase):
         csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
         response = await self.client.get("/settings", headers=self.headers)
         body = await response.text()
-        for label in ("Bot settings", "Payment settings", "Channel settings", "Trial settings", "Bot Token", "Require channel membership", "Save all settings"):
+        for label in ("Bot settings", "Welcome settings", "Before-START description", "Welcome message", "Payment settings", "Channel settings", "Trial settings", "Bot Token", "Require channel membership", "Save all settings"):
             self.assertIn(label, body)
         for hidden in ("XUI_VERIFY_SSL", "XUI_INBOUND_IDS", "DEMO_MODE"):
             self.assertNotIn(hidden, body)
@@ -176,6 +176,9 @@ class PanelTests(IsolatedAsyncioTestCase):
         response = await self.client.post("/settings", headers=self.headers, data={"csrf": csrf, "CHANNEL_JOIN_REQUIRED": "false"}, allow_redirects=False)
         self.assertEqual(303, response.status)
         self.assertEqual("false", management.read_config()["CHANNEL_JOIN_REQUIRED"])
+        response = await self.client.post("/settings", headers=self.headers, data={"csrf": csrf, "BOT_DESCRIPTION": "Welcome before START", "WELCOME_MESSAGE": "Hello {name}\nChoose a plan"}, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        self.assertEqual("Hello {name}\nChoose a plan", management.read_config()["WELCOME_MESSAGE"])
 
     async def test_bot_buttons_page_requires_login_and_saves_all_six(self):
         response = await self.client.get("/buttons", headers=self.headers, allow_redirects=False)

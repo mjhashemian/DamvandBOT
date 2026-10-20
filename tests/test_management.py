@@ -107,6 +107,27 @@ class ManagementTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "menu button"):
             management.validate_settings(config)
 
+    def test_welcome_copy_limits(self):
+        config = dict(management.DEFAULTS)
+        config.update({
+            "BOT_TOKEN": "123456789:" + "A" * 35,
+            "ADMIN_IDS": "123456789",
+            "CHANNEL_USERNAME": "@publicchannel",
+            "SUPPORT_USERNAME": "@supportuser",
+            "XUI_BASE_URL": "https://127.0.0.1:2053/panel",
+            "XUI_API_TOKEN": "secret",
+            "XUI_SUBSCRIPTION_BASE": "https://example.com/sub",
+        })
+        config["WELCOME_MESSAGE"] = "سلام {name}\nخوش آمدی"
+        management.validate_settings(config)
+        config["WELCOME_MESSAGE"] = "A" * 901
+        with self.assertRaisesRegex(ValueError, "Welcome message"):
+            management.validate_settings(config)
+        config["WELCOME_MESSAGE"] = "خوش آمدی"
+        config["BOT_DESCRIPTION"] = "A" * 513
+        with self.assertRaisesRegex(ValueError, "Bot description"):
+            management.validate_settings(config)
+
     def test_password_hash_and_check(self):
         management.set_panel_password("a-very-long-panel-password")
         record = json.loads(management.AUTH_PATH.read_text(encoding="utf-8"))

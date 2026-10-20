@@ -34,12 +34,14 @@ LOGIN_COOKIE = "damavand_login"
 NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/settings/reveal", "/buttons", "/terms"})
 SETTING_GROUPS = (
     ("Bot settings", ("BOT_TOKEN", "ADMIN_IDS", "SUPPORT_USERNAME", "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE")),
+    ("Welcome settings", ("BOT_DESCRIPTION", "WELCOME_MESSAGE")),
     ("Channel settings", ("CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL")),
     ("Payment settings", ("CARD_PAYMENT_ENABLED", "CARD_PAYMENT_CARD_NUMBER", "CARD_PAYMENT_HOLDER", "CARD_PAYMENT_INSTRUCTIONS")),
     ("Trial settings", ("TRIAL_ENABLED", "TRIAL_MB", "TRIAL_DAYS")),
 )
 SETTING_LABELS = {
     "BOT_TOKEN": "Bot Token", "ADMIN_IDS": "Admin Telegram IDs", "SUPPORT_USERNAME": "Support username",
+    "BOT_DESCRIPTION": "Before-START description", "WELCOME_MESSAGE": "Welcome message",
     "XUI_BASE_URL": "3x-ui panel URL", "XUI_API_TOKEN": "3x-ui API token",
     "XUI_SUBSCRIPTION_BASE": "Subscription base URL", "CHANNEL_USERNAME": "Channel username",
     "CHANNEL_ID": "Channel ID", "CHANNEL_JOIN_URL": "Channel join link", "CHANNEL_JOIN_REQUIRED": "Require channel membership",
@@ -441,8 +443,9 @@ async def settings(request: web.Request):
         for key in keys:
             if key in {"CARD_PAYMENT_ENABLED", "TRIAL_ENABLED", "CHANNEL_JOIN_REQUIRED"}:
                 field = f'<select name="{key}"><option value="true" {"selected" if data.get(key)=="true" else ""}>Enabled</option><option value="false" {"selected" if data.get(key)!="true" else ""}>Disabled</option></select>'
-            elif key == "CARD_PAYMENT_INSTRUCTIONS":
-                field = f'<textarea name="{key}" maxlength="4096">{esc(data.get(key,""))}</textarea>'
+            elif key in {"CARD_PAYMENT_INSTRUCTIONS", "BOT_DESCRIPTION", "WELCOME_MESSAGE"}:
+                maxlength = 512 if key == "BOT_DESCRIPTION" else 900 if key == "WELCOME_MESSAGE" else 4096
+                field = f'<textarea name="{key}" maxlength="{maxlength}">{esc(data.get(key,""))}</textarea>'
             elif key in SECRET_SETTINGS:
                 placeholder = "Saved — leave blank to keep current" if data.get(key) else ""
                 field = (
@@ -453,7 +456,8 @@ async def settings(request: web.Request):
             else:
                 field = f'<input name="{key}" type="text" value="{esc(data.get(key, ""))}" maxlength="4096" autocomplete="off">'
             fields.append(f'<label>{esc(SETTING_LABELS[key])}{field}</label>')
-        sections.append(f'<section class="card setting-group"><h2>{esc(title)}</h2><div class="setting-grid">{"".join(fields)}</div></section>')
+        hint = '<p class="muted">The description appears before START. The banner and welcome message are sent after /start. Use {name} and {requirements} as optional placeholders in the welcome message.</p>' if title == "Welcome settings" else ""
+        sections.append(f'<section class="card setting-group"><h2>{esc(title)}</h2>{hint}<div class="setting-grid">{"".join(fields)}</div></section>')
     intro = "Enter the bot and 3x-ui details to finish setup. Channel membership is optional." if not CONFIG_PATH.exists() else "Saved values remain here after refresh. Secret tokens are hidden; leave them blank to keep the saved value."
     body = f'<p class="muted">{esc(intro)}</p><form method="post" action="/settings"><input type="hidden" name="csrf" value="{esc(csrf)}">{"".join(sections)}<div class="save-bar"><button>Save all settings</button></div></form>'
     return page("Settings", body, csrf, request.query.get("message", ""))

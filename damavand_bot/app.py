@@ -12,13 +12,14 @@ import qrcode
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     BufferedInputFile,
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     LabeledPrice,
@@ -48,6 +49,7 @@ from .keyboards import (
     terms_keyboard,
 )
 from .xui import XUIClient, XUIError
+from .welcome import WELCOME_BANNER, render_welcome
 
 
 logger = logging.getLogger(__name__)
@@ -56,18 +58,7 @@ router.message.filter(F.chat.type == ChatType.PRIVATE)
 router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
 runtime_app: App | None = None
 
-WELCOME = (
-    "سلام <b>{name}</b> عزیزم! به دماوند VPN خیلی خوش اومدی ⭐️\n"
-    "خیالت راحت، واسه انتخاب بهترین سرور مناسب نیازت، گام‌به‌گام کنارتیم 😎\n"
-    "راستی، هر وقت به مشکلی خوردی یا سوالی داشتی، پشتیبانی ما کنارته 💬"
-)
-
-STARTUP_WELCOME = (
-    "سلام <b>{name}</b> عزیز! 🌄\n\n"
-    "به <b>دماوند VPN</b> خوش اومدی. اینجا می‌تونی سرویس مناسب خودت رو انتخاب کنی، "
-    "وضعیت سرویس‌هات رو ببینی و هر زمان لازم بود تمدیدشون کنی.\n\n"
-    "برای شروع، {requirements}؛ بعد همه‌چیز از منوی پایین در دسترسته. 🤝"
-)
+MENU_READY = "✅ آماده‌ای! از منوی پایین گزینهٔ موردنظرت رو انتخاب کن."
 
 BUY_INTRO = (
     "همه سرویس‌ها دارای آی‌پی ثابت هستن که برای ترید، سرویس‌های برنامه‌نویسی، "
@@ -159,8 +150,7 @@ class App:
         return True
 
     async def show_welcome(self, message: Message) -> None:
-        name = html.escape(message.from_user.first_name or "دوست")
-        await message.answer(WELCOME.format(name=name), reply_markup=self.menu())
+        await message.answer(MENU_READY, reply_markup=self.menu())
 
     async def notify_admins(self, text: str) -> None:
         for admin_id in self.config.admin_ids:
@@ -369,12 +359,16 @@ async def _send_credentials(app: App, chat_id: int, envelope: dict, email: str) 
 async def start(message: Message) -> None:
     app = _app(message)
     user = message.from_user
-    is_new_user = not await app.db.user_exists(user.id)
     await app.db.upsert_user(user.id, user.username, user.full_name)
     claimed_services = await app.db.claim_pending_services(user.id, user.username)
-    if is_new_user:
-        requirements = "عضویت در کانال و قوانین رو تأیید کن" if app.config.channel_join_required else "قوانین رو تأیید کن"
-        await message.answer(STARTUP_WELCOME.format(name=html.escape(user.full_name), requirements=requirements))
+    welcome_text = html.escape(render_welcome(
+        app.config.welcome_message, user.first_name or "دوست", app.config.channel_join_required
+    ))
+    try:
+        await message.answer_photo(photo=FSInputFile(WELCOME_BANNER), caption=welcome_text)
+    except (OSError, TelegramAPIError):
+        logger.exception("Welcome banner delivery failed")
+        await message.answer(welcome_text)
     if not await app.gate(message):
         return
     await app.show_welcome(message)
@@ -391,7 +385,7 @@ async def check_join(callback: CallbackQuery) -> None:
     if not app.config.channel_join_required:
         if await app.gate(callback):
             await callback.message.answer(
-                WELCOME.format(name=html.escape(callback.from_user.first_name or "دوست")),
+                MENU_READY,
                 reply_markup=app.menu(),
             )
         return
@@ -435,7 +429,7 @@ async def accept_terms(callback: CallbackQuery) -> None:
     await app.db.accept_terms(callback.from_user.id, app.config.terms_version)
     await callback.answer("قوانین پذیرفته شد ✅")
     await callback.message.answer(
-        WELCOME.format(name=html.escape(callback.from_user.first_name or "دوست")),
+        MENU_READY,
         reply_markup=app.menu(),
     )
 
@@ -1326,6 +1320,11 @@ async def run() -> None:
             runtime_app = app
             dispatcher = Dispatcher()
             dispatcher.include_router(router)
+            try:
+                await bot.set_my_description(description=config.bot_description)
+                await bot.set_my_description(description=config.bot_description, language_code="fa")
+            except TelegramAPIError:
+                logger.exception("Could not update pre-START bot description")
             await bot.delete_webhook(drop_pending_updates=False)
             await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
     finally:

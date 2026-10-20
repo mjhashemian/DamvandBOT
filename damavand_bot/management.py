@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 from .menu import MENU_SETTING_KEYS
+from .welcome import DEFAULT_BOT_DESCRIPTION, DEFAULT_WELCOME_MESSAGE
 
 CONFIG_DIR = Path(os.environ.get("DAMAVAND_CONFIG_DIR", "/etc/damavand-vpn-bot"))
 CONFIG_PATH = CONFIG_DIR / "config.json"
@@ -24,6 +25,8 @@ PANEL_DOMAIN_PATH = CONFIG_DIR / "panel-domain"
 DEFAULTS = {
     "BOT_TOKEN": "",
     "ADMIN_IDS": "",
+    "BOT_DESCRIPTION": DEFAULT_BOT_DESCRIPTION,
+    "WELCOME_MESSAGE": DEFAULT_WELCOME_MESSAGE,
     "CHANNEL_USERNAME": "",
     "CHANNEL_ID": "",
     "CHANNEL_JOIN_URL": "",
@@ -48,7 +51,7 @@ DEFAULTS = {
     **{key: "true" for key in MENU_SETTING_KEYS.values()},
 }
 SETTINGS = (
-    "BOT_TOKEN", "ADMIN_IDS", "CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL", "SUPPORT_USERNAME",
+    "BOT_TOKEN", "ADMIN_IDS", "BOT_DESCRIPTION", "WELCOME_MESSAGE", "CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL", "SUPPORT_USERNAME",
     "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE",
     "CARD_PAYMENT_ENABLED", "CARD_PAYMENT_CARD_NUMBER",
     "CARD_PAYMENT_HOLDER", "CARD_PAYMENT_INSTRUCTIONS",
@@ -90,12 +93,17 @@ def validate_settings(data: dict[str, str]) -> None:
 
     for key in SETTINGS:
         value = data.get(key, "")
-        if not isinstance(value, str) or len(value) > 4096 or "\x00" in value or "\n" in value or "\r" in value:
+        multiline = key in {"BOT_DESCRIPTION", "WELCOME_MESSAGE", "CARD_PAYMENT_INSTRUCTIONS"}
+        if not isinstance(value, str) or len(value) > 4096 or "\x00" in value or (not multiline and ("\n" in value or "\r" in value)):
             raise ValueError(f"Invalid {key}")
     if not re.fullmatch(r"\d{6,12}:[A-Za-z0-9_-]{30,}", data["BOT_TOKEN"]):
         raise ValueError("Enter a valid Telegram bot token")
     if not re.fullmatch(r"[1-9]\d*(,[1-9]\d*)*", data["ADMIN_IDS"]):
         raise ValueError("ADMIN_IDS must be comma-separated positive Telegram IDs")
+    if not 1 <= len(data["BOT_DESCRIPTION"].strip()) <= 512:
+        raise ValueError("Bot description must be 1–512 characters")
+    if not 1 <= len(data["WELCOME_MESSAGE"].strip()) <= 900:
+        raise ValueError("Welcome message must be 1–900 characters")
     if data["CHANNEL_USERNAME"] and not re.fullmatch(r"@[A-Za-z0-9_]{5,32}", data["CHANNEL_USERNAME"]):
         raise ValueError("CHANNEL_USERNAME must be a public @channel username")
     if data["CHANNEL_ID"] and not re.fullmatch(r"-100\d{5,20}", data["CHANNEL_ID"]):

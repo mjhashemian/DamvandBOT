@@ -10,6 +10,7 @@ from damavand_bot.config import Config
 from damavand_bot.db import Database
 from damavand_bot.keyboards import CHANNEL, main_menu
 from damavand_bot.menu import DEFAULT_ENABLED_BUTTONS, MENU_BUTTONS
+from damavand_bot.welcome import DEFAULT_WELCOME_MESSAGE, render_welcome
 
 
 class ChannelRequirementTests(IsolatedAsyncioTestCase):
@@ -59,6 +60,16 @@ class MenuButtonTests(IsolatedAsyncioTestCase):
             await buy(message)
         app.gate.assert_not_awaited()
         message.answer.assert_awaited_once()
+
+
+class WelcomeTests(IsolatedAsyncioTestCase):
+    async def test_welcome_text_uses_name_and_channel_requirement(self):
+        enabled = render_welcome(DEFAULT_WELCOME_MESSAGE, "مریم", True)
+        disabled = render_welcome(DEFAULT_WELCOME_MESSAGE, "مریم", False)
+        self.assertIn("مریم", enabled)
+        self.assertIn("عضویت در کانال", enabled)
+        self.assertNotIn("عضویت در کانال", disabled)
+        self.assertIn("آی‌پی ثابت", disabled)
 
 
 class DatabaseTests(IsolatedAsyncioTestCase):
@@ -219,14 +230,16 @@ class DatabaseTests(IsolatedAsyncioTestCase):
                 ("newtelegramuser", None, "Old service", "https://example.com/sub/on-start"),
             )
             await db.commit()
-        user = SimpleNamespace(id=777, username="NewTelegramUser", full_name="New User")
-        message = SimpleNamespace(from_user=user, answer=AsyncMock())
-        app = SimpleNamespace(db=self.db, config=SimpleNamespace(channel_join_required=True), gate=AsyncMock(return_value=True), show_welcome=AsyncMock())
+        user = SimpleNamespace(id=777, username="NewTelegramUser", full_name="New User", first_name="New")
+        message = SimpleNamespace(from_user=user, answer=AsyncMock(), answer_photo=AsyncMock())
+        app = SimpleNamespace(db=self.db, config=SimpleNamespace(channel_join_required=True, welcome_message=DEFAULT_WELCOME_MESSAGE), gate=AsyncMock(return_value=True), show_welcome=AsyncMock())
         with patch("damavand_bot.app.runtime_app", app):
             await start(message)
         self.assertEqual(1, len(await self.db.list_manual_services(777)))
         app.show_welcome.assert_awaited_once_with(message)
-        self.assertEqual(2, message.answer.await_count)
+        message.answer_photo.assert_awaited_once()
+        self.assertIn("New", message.answer_photo.await_args.kwargs["caption"])
+        self.assertEqual(1, message.answer.await_count)
 
     async def test_full_discount_skips_payment_and_cannot_be_reused(self):
         plan = await self.db.get_plan("gb10")
