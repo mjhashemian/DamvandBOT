@@ -14,6 +14,8 @@ import secrets
 import tempfile
 from pathlib import Path
 
+from .menu import MENU_SETTING_KEYS
+
 CONFIG_DIR = Path(os.environ.get("DAMAVAND_CONFIG_DIR", "/etc/damavand-vpn-bot"))
 CONFIG_PATH = CONFIG_DIR / "config.json"
 AUTH_PATH = CONFIG_DIR / "panel-auth.json"
@@ -43,6 +45,7 @@ DEFAULTS = {
     "TRIAL_ENABLED": "true",
     "TRIAL_MB": "500",
     "TRIAL_DAYS": "1",
+    **{key: "true" for key in MENU_SETTING_KEYS.values()},
 }
 SETTINGS = (
     "BOT_TOKEN", "ADMIN_IDS", "CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL", "SUPPORT_USERNAME",
@@ -117,6 +120,8 @@ def validate_settings(data: dict[str, str]) -> None:
         raise ValueError("XUI_API_TOKEN is required")
     if any(data[key] not in ("true", "false") for key in ("XUI_VERIFY_SSL", "DEMO_MODE", "CHANNEL_JOIN_REQUIRED", "CARD_PAYMENT_ENABLED", "TRIAL_ENABLED")):
         raise ValueError("Invalid boolean setting")
+    if any(data[key] not in ("true", "false") for key in MENU_SETTING_KEYS.values()):
+        raise ValueError("Invalid menu button setting")
     if not data["TRIAL_MB"].isdigit() or not 1 <= int(data["TRIAL_MB"]) <= 102400:
         raise ValueError("TRIAL_MB must be 1–102400")
     if not data["TRIAL_DAYS"].isdigit() or not 1 <= int(data["TRIAL_DAYS"]) <= 365:

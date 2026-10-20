@@ -1,12 +1,15 @@
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from damavand_bot.app import App, _finish_discount, _provision_order, _send_credentials, start
+from damavand_bot.app import App, _finish_discount, _provision_order, _send_credentials, buy, start
+from damavand_bot.config import Config
 from damavand_bot.db import Database
 from damavand_bot.keyboards import CHANNEL, main_menu
+from damavand_bot.menu import DEFAULT_ENABLED_BUTTONS, MENU_BUTTONS
 
 
 class ChannelRequirementTests(IsolatedAsyncioTestCase):
@@ -24,6 +27,38 @@ class ChannelRequirementTests(IsolatedAsyncioTestCase):
         app = App(config, bot, None, None)
         self.assertFalse(await app.is_channel_member(123))
         bot.get_chat_member.assert_awaited_once_with("@publicchannel", 123)
+
+
+class MenuButtonTests(IsolatedAsyncioTestCase):
+    async def test_saved_button_flag_is_loaded_when_bot_starts(self):
+        with patch.dict(os.environ, {
+            "BOT_TOKEN": "123456789:" + "A" * 35,
+            "ADMIN_IDS": "123456789",
+            "XUI_BASE_URL": "https://example.com/panel",
+            "XUI_API_TOKEN": "test-token",
+            "XUI_SUBSCRIPTION_BASE": "https://example.com/sub",
+            "MENU_BUY_ENABLED": "false",
+        }):
+            config = Config.from_env()
+        self.assertFalse(config.button_enabled("buy"))
+        self.assertTrue(config.button_enabled("renew"))
+
+    async def test_admin_menu_has_only_the_six_user_buttons(self):
+        labels = [button.text for row in main_menu().keyboard for button in row]
+        self.assertEqual([label for _, label in MENU_BUTTONS], labels)
+        self.assertNotIn("🎟 مدیریت کد تخفیف", labels)
+
+    async def test_disabled_button_is_hidden_and_old_buy_button_is_blocked(self):
+        enabled = DEFAULT_ENABLED_BUTTONS - {"buy"}
+        labels = [button.text for row in main_menu(enabled).keyboard for button in row]
+        self.assertNotIn(MENU_BUTTONS[0][1], labels)
+        config = SimpleNamespace(button_enabled=lambda name: name in enabled)
+        app = SimpleNamespace(config=config, menu=lambda: main_menu(enabled), gate=AsyncMock(side_effect=AssertionError("must not enter buy")))
+        message = SimpleNamespace(answer=AsyncMock())
+        with patch("damavand_bot.app.runtime_app", app):
+            await buy(message)
+        app.gate.assert_not_awaited()
+        message.answer.assert_awaited_once()
 
 
 class DatabaseTests(IsolatedAsyncioTestCase):

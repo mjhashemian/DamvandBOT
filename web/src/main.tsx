@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { LayoutDashboard, Users, Package, Receipt, Tags, BadgePercent, Settings, ScrollText, Activity, LogOut, Languages, Menu, Mountain } from 'lucide-react'
+import { LayoutDashboard, Users, Package, Receipt, Tags, BadgePercent, Settings, ScrollText, Activity, LogOut, Languages, Menu, Mountain, ToggleRight } from 'lucide-react'
 import { Button } from './components/ui/button'
 import { Sidebar, SidebarHeader, SidebarContent, SidebarFooter, SidebarMenuButton } from './components/ui/sidebar'
 import './index.css'
@@ -14,13 +14,14 @@ const routes = [
   ['/orders', 'Orders', 'سفارش‌ها', Receipt],
   ['/plans', 'Plans', 'پلن‌ها', Tags],
   ['/discounts', 'Discounts', 'تخفیف‌ها', BadgePercent],
+  ['/buttons', 'Bot buttons', 'دکمه‌های ربات', ToggleRight],
   ['/settings', 'Settings', 'تنظیمات', Settings],
   ['/terms', 'Terms and conditions', 'قوانین و شرایط', ScrollText],
   ['/audit', 'Audit', 'گزارش فعالیت', Activity],
 ] as const
 
 const translations: Record<string, string> = {
-  'Overview':'نمای کلی','Users':'کاربران','Assigned services':'سرویس‌های اختصاصی','Orders':'سفارش‌ها','Plans':'پلن‌ها','Discounts':'تخفیف‌ها','Settings':'تنظیمات','Terms and conditions':'قوانین و شرایط','Audit':'گزارش فعالیت',
+  'Overview':'نمای کلی','Users':'کاربران','Assigned services':'سرویس‌های اختصاصی','Orders':'سفارش‌ها','Plans':'پلن‌ها','Discounts':'تخفیف‌ها','Bot buttons':'دکمه‌های ربات','Settings':'تنظیمات','Terms and conditions':'قوانین و شرایط','Audit':'گزارش فعالیت',
   'Sign in':'ورود','Panel password':'رمز پنل','Invalid password.':'رمز نادرست است.','Try again':'دوباره تلاش کنید',
   'Bot settings':'تنظیمات ربات','Payment settings':'تنظیمات پرداخت','Channel settings':'تنظیمات کانال','Trial settings':'تنظیمات سرویس آزمایشی',
   'Bot Token':'توکن ربات','Admin Telegram IDs':'شناسه‌های تلگرام مدیران','Support username':'نام کاربری پشتیبانی','3x-ui panel URL':'نشانی پنل 3x-ui','3x-ui API token':'توکن API پنل 3x-ui','Subscription base URL':'نشانی پایه اشتراک',
@@ -41,6 +42,9 @@ const translations: Record<string, string> = {
   'Waiting for username to start the bot':'در انتظار شروع ربات توسط این نام کاربری','Service removed':'سرویس حذف شد','Existing 3x-ui service':'سرویس موجود 3x-ui',
   'A username must already be known to the bot. Use a numeric Telegram ID for users who have not started it yet.':'نام کاربری باید از قبل برای ربات شناخته‌شده باشد. برای افراد جدید از شناسه عددی تلگرام استفاده کنید.',
   'Saving changes the version and asks users to accept again.':'با ذخیره تغییرات، کاربران باید قوانین را دوباره بپذیرند.',
+  'Choose which buttons users see in the bot. Disabled buttons and their entry points stop accepting new requests; existing orders can still be completed.':'انتخاب کنید کاربران کدام دکمه‌ها را در ربات ببینند. دکمه‌های غیرفعال درخواست جدید نمی‌پذیرند؛ سفارش‌های قبلی همچنان قابل تکمیل‌اند.',
+  'The Channel button is hidden whenever the channel membership requirement is disabled in Settings. Hiding the Channel button alone does not turn off that requirement.':'وقتی الزام عضویت در کانال در تنظیمات خاموش باشد، دکمه کانال هم پنهان می‌شود. پنهان کردن دکمه کانال به‌تنهایی الزام عضویت را خاموش نمی‌کند.',
+  'Save bot buttons':'ذخیره دکمه‌های ربات','Bot buttons saved; bot restart requested':'دکمه‌های ربات ذخیره شدند؛ ربات در حال راه‌اندازی مجدد است',
   'Service assignment saved':'سرویس اختصاص داده شد','Settings saved; bot restart requested':'تنظیمات ذخیره شد؛ ربات در حال راه‌اندازی مجدد است',
   'Saved — leave blank to keep current':'ذخیره شده؛ برای حفظ مقدار قبلی خالی بگذارید',
   'Show':'نمایش','Hide':'پنهان‌سازی',

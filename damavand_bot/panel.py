@@ -24,13 +24,14 @@ from .management import (
     SECRET_SETTINGS, SETTINGS,
     read_config, validate_settings, verify_panel_password, write_config,
 )
+from .menu import MENU_BUTTONS, MENU_SETTING_KEYS
 
 SESSIONS: dict[str, tuple[float, str]] = {}
 LOGIN_CHALLENGES: dict[str, tuple[float, str]] = {}
 FAILURES: dict[str, list[float]] = {}
 COOKIE = "damavand_panel"
 LOGIN_COOKIE = "damavand_login"
-NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/settings/reveal", "/terms"})
+NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/settings/reveal", "/buttons", "/terms"})
 SETTING_GROUPS = (
     ("Bot settings", ("BOT_TOKEN", "ADMIN_IDS", "SUPPORT_USERNAME", "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE")),
     ("Channel settings", ("CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL")),
@@ -458,6 +459,47 @@ async def settings(request: web.Request):
     return page("Settings", body, csrf, request.query.get("message", ""))
 
 
+async def buttons(request: web.Request):
+    csrf = token(request)
+    data = read_config()
+    english = {
+        "buy": "Buy service", "renew": "Renew service", "services": "My services",
+        "trial": "Trial service", "support": "Support", "channel": "Channel",
+    }
+    fields = []
+    for name, persian in MENU_BUTTONS:
+        key = MENU_SETTING_KEYS[name]
+        enabled = data[key] == "true"
+        fields.append(
+            f'<label>{esc(english[name])} — {esc(persian)}'
+            f'<select name="{key}"><option value="true" {"selected" if enabled else ""}>Enabled</option>'
+            f'<option value="false" {"selected" if not enabled else ""}>Disabled</option></select></label>'
+        )
+    body = (
+        '<p class="muted">Choose which buttons users see in the bot. Disabled buttons and their entry points stop accepting new requests; existing orders can still be completed.</p>'
+        '<p class="muted">The Channel button is hidden whenever the channel membership requirement is disabled in Settings. Hiding the Channel button alone does not turn off that requirement.</p>'
+        f'<form method="post" action="/buttons"><input type="hidden" name="csrf" value="{esc(csrf)}">'
+        f'<section class="card setting-group"><h2>Bot buttons</h2><div class="setting-grid">{"".join(fields)}</div></section>'
+        '<div class="save-bar"><button>Save bot buttons</button></div></form>'
+    )
+    return page("Bot buttons", body, csrf, request.query.get("message", ""))
+
+
+async def save_buttons(request: web.Request):
+    csrf = token(request)
+    posted = await form(request, csrf)
+    values = {key: str(posted.get(key, "")) for key in MENU_SETTING_KEYS.values()}
+    if any(value not in {"true", "false"} for value in values.values()):
+        raise web.HTTPBadRequest(text="Invalid bot button setting")
+    data = read_config()
+    data.update(values)
+    write_config(data)
+    with database() as db:
+        audit(db, "panel.buttons_saved", {"enabled": [name for name, key in MENU_SETTING_KEYS.items() if values[key] == "true"]})
+    asyncio.create_task(restart_bot())
+    raise web.HTTPSeeOther("/buttons?message=" + quote("Bot buttons saved; bot restart requested"))
+
+
 async def restart_bot():
     await asyncio.sleep(0.4)
     pid_path = Path(read_config()["DB_PATH"]).parent / "bot.pid"
@@ -548,9 +590,9 @@ def make_app() -> web.Application:
     app.router.add_post("/login", login)
     app.router.add_post("/logout", logout)
     app.router.add_post("/settings/reveal", reveal_setting)
-    for path, handler in (("/", overview), ("/users", users), ("/services", manual_services), ("/orders", orders), ("/plans", plans), ("/discounts", discounts), ("/settings", settings), ("/terms", terms), ("/audit", audit_log)):
+    for path, handler in (("/", overview), ("/users", users), ("/services", manual_services), ("/orders", orders), ("/plans", plans), ("/discounts", discounts), ("/settings", settings), ("/buttons", buttons), ("/terms", terms), ("/audit", audit_log)):
         app.router.add_get(path, handler)
-    for path, handler in (("/plans", save_plan), ("/discounts", save_discount), ("/services", save_manual_service), ("/settings", save_settings), ("/terms", save_terms)):
+    for path, handler in (("/plans", save_plan), ("/discounts", save_discount), ("/services", save_manual_service), ("/settings", save_settings), ("/buttons", save_buttons), ("/terms", save_terms)):
         app.router.add_post(path, handler)
     return app
 

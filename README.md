@@ -52,7 +52,10 @@ ssh -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
 Then open <http://127.0.0.1:8765> and sign in. The panel shows users and
 orders and edits plans/prices, user- or plan-specific discounts, assigned
 subscription links for existing users, channel ID/join link/support, 3x-ui settings,
-payment method/card details, trial settings, and versioned Terms. The sidebar
+payment method/card details, trial settings, and versioned Terms. The Bot buttons
+page enables or disables the six user-facing menu buttons; the admin-only discount
+button is no longer shown. Disabling a button also blocks its new entry requests,
+while already-started orders can still finish. The sidebar
 provides English and Persian navigation. Settings are grouped into Bot,
 Payment, Channel, and Trial sections and saved together. Channel membership
 is required by default; turn it off in Channel settings to let users proceed

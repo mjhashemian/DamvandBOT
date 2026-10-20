@@ -5,31 +5,22 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 
 from .config import Config
 from .db import Plan
+from .menu import DEFAULT_ENABLED_BUTTONS, MENU_BUTTONS
 
 
-BUY = "🛒 خرید سرویس"
-RENEW = "♻️ تمدید سرویس"
-MY_SERVICES = "📋 سرویس‌های من"
-TRIAL = "🎁 سرویس تست"
-SUPPORT = "💬 پشتیبانی"
-CHANNEL = "📢 کانال ما"
-DISCOUNTS = "🎟 مدیریت کد تخفیف"
+BUY, RENEW, MY_SERVICES, TRIAL, SUPPORT, CHANNEL = (label for _, label in MENU_BUTTONS)
 
 
-def main_menu(admin: bool = False, channel_enabled: bool = True) -> ReplyKeyboardMarkup:
-    rows = [
-        [KeyboardButton(text=BUY), KeyboardButton(text=RENEW)],
-        [KeyboardButton(text=MY_SERVICES), KeyboardButton(text=TRIAL)],
-        [KeyboardButton(text=SUPPORT)],
-    ]
-    if channel_enabled:
-        rows[-1].append(KeyboardButton(text=CHANNEL))
-    if admin:
-        rows.append([KeyboardButton(text=DISCOUNTS)])
+def main_menu(enabled_buttons: frozenset[str] = DEFAULT_ENABLED_BUTTONS, channel_enabled: bool = True) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
+    visible = [KeyboardButton(text=label) for name, label in MENU_BUTTONS if name in enabled_buttons and (name != "channel" or channel_enabled)]
+    rows = [visible[index:index + 2] for index in range(0, len(visible), 2)]
+    if not rows:
+        return ReplyKeyboardRemove()
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
@@ -129,7 +120,9 @@ def services_keyboard(emails: list[str], manual_services=()) -> InlineKeyboardMa
     )
 
 
-def service_actions(email: str) -> InlineKeyboardMarkup:
+def service_actions(email: str, renew_enabled: bool = True) -> InlineKeyboardMarkup | None:
+    if not renew_enabled:
+        return None
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="♻️ تمدید این سرویس", callback_data=f"renew:{email}")]

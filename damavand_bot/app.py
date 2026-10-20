@@ -31,7 +31,6 @@ from .db import Database, Plan
 from .keyboards import (
     BUY,
     CHANNEL,
-    DISCOUNTS,
     MY_SERVICES,
     RENEW,
     SUPPORT,
@@ -104,6 +103,9 @@ class App:
     def is_admin(self, user_id: int) -> bool:
         return user_id in self.config.admin_ids
 
+    def menu(self):
+        return main_menu(self.config.enabled_buttons, self.config.channel_join_required)
+
     async def is_channel_member(self, user_id: int) -> bool:
         if not self.config.channel_join_required:
             return True
@@ -158,7 +160,7 @@ class App:
 
     async def show_welcome(self, message: Message) -> None:
         name = html.escape(message.from_user.first_name or "دوست")
-        await message.answer(WELCOME.format(name=name), reply_markup=main_menu(self.is_admin(message.from_user.id), self.config.channel_join_required))
+        await message.answer(WELCOME.format(name=name), reply_markup=self.menu())
 
     async def notify_admins(self, text: str) -> None:
         for admin_id in self.config.admin_ids:
@@ -390,7 +392,7 @@ async def check_join(callback: CallbackQuery) -> None:
         if await app.gate(callback):
             await callback.message.answer(
                 WELCOME.format(name=html.escape(callback.from_user.first_name or "دوست")),
-                reply_markup=main_menu(app.is_admin(callback.from_user.id), False),
+                reply_markup=app.menu(),
             )
         return
     try:
@@ -434,7 +436,7 @@ async def accept_terms(callback: CallbackQuery) -> None:
     await callback.answer("قوانین پذیرفته شد ✅")
     await callback.message.answer(
         WELCOME.format(name=html.escape(callback.from_user.first_name or "دوست")),
-        reply_markup=main_menu(app.is_admin(callback.from_user.id), app.config.channel_join_required),
+        reply_markup=app.menu(),
     )
 
 
@@ -447,6 +449,9 @@ async def reject_terms(callback: CallbackQuery) -> None:
 @router.message(F.text == BUY)
 async def buy(message: Message) -> None:
     app = _app(message)
+    if not app.config.button_enabled("buy"):
+        await message.answer("بخش خرید در حال حاضر غیرفعال است.", reply_markup=app.menu())
+        return
     if not await app.gate(message):
         return
     plans = await app.db.list_plans()
@@ -489,6 +494,9 @@ async def select_plan(callback: CallbackQuery, state: FSMContext) -> None:
     if action not in {"buy", "renew"}:
         await callback.answer("درخواست نامعتبر است.", show_alert=True)
         return
+    if not app.config.button_enabled(action):
+        await callback.answer("این بخش در حال حاضر غیرفعال است.", show_alert=True)
+        return
     if action == "buy" and target_email:
         await callback.answer("درخواست نامعتبر است.", show_alert=True)
         return
@@ -518,6 +526,10 @@ async def select_plan(callback: CallbackQuery, state: FSMContext) -> None:
 @router.message(NewServiceName.waiting_for_name)
 async def receive_service_name(message: Message, state: FSMContext) -> None:
     app = _app(message)
+    if not app.config.button_enabled("buy"):
+        await state.clear()
+        await message.answer("بخش خرید در حال حاضر غیرفعال است.", reply_markup=app.menu())
+        return
     if not await app.gate(message):
         return
     name = (message.text or "").strip()
@@ -897,6 +909,9 @@ async def cancel_demo_order(callback: CallbackQuery) -> None:
 @router.message(F.text == TRIAL)
 async def trial(message: Message) -> None:
     app = _app(message)
+    if not app.config.button_enabled("trial"):
+        await message.answer("سرویس تست در حال حاضر غیرفعال است.", reply_markup=app.menu())
+        return
     if not await app.gate(message):
         return
     if not app.config.trial_enabled:
@@ -938,6 +953,10 @@ async def trial(message: Message) -> None:
 @router.message(F.text == MY_SERVICES)
 async def renew_list(message: Message) -> None:
     app = _app(message)
+    button = "renew" if message.text == RENEW else "services"
+    if not app.config.button_enabled(button):
+        await message.answer("این بخش در حال حاضر غیرفعال است.", reply_markup=app.menu())
+        return
     if not await app.gate(message):
         return
     manual_services = await app.db.list_manual_services(message.from_user.id)
@@ -963,6 +982,9 @@ async def renew_list(message: Message) -> None:
 @router.callback_query(F.data.startswith("manual:"))
 async def manual_service_detail(callback: CallbackQuery) -> None:
     app = _app(callback)
+    if not (app.config.button_enabled("services") or app.config.button_enabled("renew")):
+        await callback.answer("این بخش در حال حاضر غیرفعال است.", show_alert=True)
+        return
     if not await app.gate(callback):
         await callback.answer()
         return
@@ -985,6 +1007,9 @@ async def manual_service_detail(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("service:"))
 async def service_detail(callback: CallbackQuery) -> None:
     app = _app(callback)
+    if not (app.config.button_enabled("services") or app.config.button_enabled("renew")):
+        await callback.answer("این بخش در حال حاضر غیرفعال است.", show_alert=True)
+        return
     if not await app.gate(callback):
         await callback.answer()
         return
@@ -1017,13 +1042,16 @@ async def service_detail(callback: CallbackQuery) -> None:
         f"<b>تعداد کانفیگ‌ها:</b> {inbound_count}\n"
         f"<b>وضعیت:</b> {'فعال ✅' if client.get('enable') else 'غیرفعال ❌'}\n\n"
         f"<b>لینک اشتراک:</b>\n<code>{html.escape(subscription)}</code>",
-        reply_markup=service_actions(email),
+        reply_markup=service_actions(email, app.config.button_enabled("renew")),
     )
 
 
 @router.callback_query(F.data.startswith("renew:"))
 async def renew_choose_plan(callback: CallbackQuery) -> None:
     app = _app(callback)
+    if not app.config.button_enabled("renew"):
+        await callback.answer("تمدید سرویس در حال حاضر غیرفعال است.", show_alert=True)
+        return
     if not await app.gate(callback):
         await callback.answer()
         return
@@ -1053,6 +1081,9 @@ async def renew_choose_plan(callback: CallbackQuery) -> None:
 @router.message(Command("paysupport"))
 async def support(message: Message) -> None:
     app = _app(message)
+    if not app.config.button_enabled("support"):
+        await message.answer("پشتیبانی از طریق بات در حال حاضر غیرفعال است.", reply_markup=app.menu())
+        return
     await message.answer(
         f"برای پشتیبانی و پیگیری پرداخت به این حساب پیام بده:\n{app.config.support_username}",
         reply_markup=InlineKeyboardMarkup(
@@ -1066,8 +1097,8 @@ async def support(message: Message) -> None:
 @router.message(F.text == CHANNEL)
 async def channel(message: Message) -> None:
     app = _app(message)
-    if not app.config.channel_join_required:
-        await message.answer("الزام عضویت در کانال غیرفعال است.")
+    if not app.config.channel_join_required or not app.config.button_enabled("channel"):
+        await message.answer("بخش کانال در حال حاضر غیرفعال است.", reply_markup=app.menu())
         return
     await message.answer(
         f"کانال رسمی دماوند VPN:\n{app.config.channel_username or app.config.channel_url}",
@@ -1111,7 +1142,6 @@ async def admin_status(message: Message) -> None:
     )
 
 
-@router.message(F.text == DISCOUNTS)
 @router.message(Command("discounts"))
 async def admin_discounts(message: Message) -> None:
     app = _app(message)

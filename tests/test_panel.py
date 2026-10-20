@@ -9,6 +9,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from damavand_bot import management, panel
 from damavand_bot.db import Database
+from damavand_bot.menu import MENU_SETTING_KEYS
 
 
 class PanelTests(IsolatedAsyncioTestCase):
@@ -175,6 +176,29 @@ class PanelTests(IsolatedAsyncioTestCase):
         response = await self.client.post("/settings", headers=self.headers, data={"csrf": csrf, "CHANNEL_JOIN_REQUIRED": "false"}, allow_redirects=False)
         self.assertEqual(303, response.status)
         self.assertEqual("false", management.read_config()["CHANNEL_JOIN_REQUIRED"])
+
+    async def test_bot_buttons_page_requires_login_and_saves_all_six(self):
+        response = await self.client.get("/buttons", headers=self.headers, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={"password": "a-very-long-panel-password", "login_csrf": login_csrf}, allow_redirects=False)
+        csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
+        response = await self.client.get("/buttons", headers=self.headers)
+        body = await response.text()
+        self.assertIn("Bot buttons", body)
+        self.assertNotIn("مدیریت کد تخفیف", body)
+        for key in MENU_SETTING_KEYS.values():
+            self.assertIn(f'name="{key}"', body)
+        values = {key: "true" for key in MENU_SETTING_KEYS.values()}
+        values[MENU_SETTING_KEYS["buy"]] = "false"
+        response = await self.client.post("/buttons", headers=self.headers, data={**values, "csrf": "wrong"}, allow_redirects=False)
+        self.assertEqual(403, response.status)
+        response = await self.client.post("/buttons", headers=self.headers, data={**values, "csrf": csrf}, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        self.assertEqual("false", management.read_config()[MENU_SETTING_KEYS["buy"]])
+        self.assertEqual("true", management.read_config()[MENU_SETTING_KEYS["renew"]])
+        response = await self.client.post("/buttons", headers=self.headers, data={"csrf": csrf, MENU_SETTING_KEYS["buy"]: "true"}, allow_redirects=False)
+        self.assertEqual(400, response.status)
 
     async def test_assign_service_to_known_username(self):
         with panel.database() as db:

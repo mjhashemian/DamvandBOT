@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .menu import MENU_SETTING_KEYS
+
 
 def _required(name: str) -> str:
     value = os.getenv(name, "").strip()
@@ -44,6 +46,7 @@ class Config:
     trial_enabled: bool
     trial_mb: int
     trial_days: int
+    enabled_buttons: frozenset[str]
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -88,7 +91,11 @@ class Config:
             trial_enabled=_bool("TRIAL_ENABLED", True),
             trial_mb=int(os.getenv("TRIAL_MB", "500")),
             trial_days=int(os.getenv("TRIAL_DAYS", "1")),
+            enabled_buttons=frozenset(name for name, key in MENU_SETTING_KEYS.items() if _bool(key, True)),
         )
+
+    def button_enabled(self, name: str) -> bool:
+        return name in self.enabled_buttons
 
     @property
     def channel_url(self) -> str:
