@@ -130,6 +130,45 @@ CREATE TABLE IF NOT EXISTS audit_log (
     details_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS wallets (
+    telegram_id INTEGER PRIMARY KEY REFERENCES users(telegram_id),
+    balance_toman INTEGER NOT NULL DEFAULT 0 CHECK(balance_toman >= 0),
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+    amount_toman INTEGER NOT NULL CHECK(amount_toman != 0),
+    balance_after INTEGER NOT NULL CHECK(balance_after >= 0),
+    kind TEXT NOT NULL,
+    reference TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS referrals (
+    invited_telegram_id INTEGER PRIMARY KEY REFERENCES users(telegram_id),
+    referrer_telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+    rewarded_order_id INTEGER UNIQUE REFERENCES orders(id),
+    reward_toman INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    CHECK(invited_telegram_id != referrer_telegram_id)
+);
+CREATE INDEX IF NOT EXISTS referrals_referrer_idx ON referrals(referrer_telegram_id);
+CREATE TABLE IF NOT EXISTS wallet_topups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_id INTEGER NOT NULL REFERENCES users(telegram_id),
+    amount_toman INTEGER NOT NULL CHECK(amount_toman > 0),
+    status TEXT NOT NULL,
+    receipt_file_id TEXT,
+    receipt_unique_id TEXT UNIQUE,
+    reviewed_by INTEGER,
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS wallet_receipt_selections (
+    telegram_id INTEGER PRIMARY KEY REFERENCES users(telegram_id),
+    topup_id INTEGER NOT NULL REFERENCES wallet_topups(id)
+);
 """
 
 
@@ -191,6 +230,10 @@ class Database:
                 if column not in columns:
                     await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
             await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS card_receipt_unique_idx ON card_payments(receipt_unique_id)")
+            await db.execute(
+                "INSERT OR IGNORE INTO wallets(telegram_id,balance_toman,created_at) "
+                "SELECT telegram_id,0,created_at FROM users"
+            )
             await db.executemany(
                 """
                 INSERT INTO plans(code,title_fa,traffic_gb,duration_days,toman_price)
@@ -201,9 +244,14 @@ class Database:
             )
             await db.commit()
 
-    async def upsert_user(self, telegram_id: int, username: str | None, full_name: str) -> None:
+    async def upsert_user(self, telegram_id: int, username: str | None, full_name: str,
+                          referrer_id: int | None = None) -> None:
         now = now_iso()
         async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            existing = await (await db.execute(
+                "SELECT 1 FROM users WHERE telegram_id=?", (telegram_id,)
+            )).fetchone()
             await db.execute(
                 """
                 INSERT INTO users(telegram_id,username,full_name,created_at,updated_at)
@@ -214,6 +262,30 @@ class Database:
                 """,
                 (telegram_id, username, full_name, now, now),
             )
+            if not existing:
+                await db.execute(
+                    "INSERT INTO wallets(telegram_id,balance_toman,created_at) VALUES(?,?,?)",
+                    (telegram_id, 5000, now),
+                )
+                await db.execute(
+                    "INSERT INTO wallet_transactions(telegram_id,amount_toman,balance_after,kind,reference,created_at) "
+                    "VALUES(?,5000,5000,'welcome',?,?)",
+                    (telegram_id, f"welcome:{telegram_id}", now),
+                )
+                if referrer_id and referrer_id != telegram_id:
+                    referrer = await (await db.execute(
+                        "SELECT 1 FROM wallets WHERE telegram_id=?", (referrer_id,)
+                    )).fetchone()
+                    if referrer:
+                        await db.execute(
+                            "INSERT INTO referrals(invited_telegram_id,referrer_telegram_id,created_at) VALUES(?,?,?)",
+                            (telegram_id, referrer_id, now),
+                        )
+            else:
+                await db.execute(
+                    "INSERT OR IGNORE INTO wallets(telegram_id,balance_toman,created_at) VALUES(?,0,?)",
+                    (telegram_id, now),
+                )
             await db.commit()
 
     async def user_exists(self, telegram_id: int) -> bool:
@@ -222,6 +294,185 @@ class Database:
                 await db.execute("SELECT 1 FROM users WHERE telegram_id=?", (telegram_id,))
             ).fetchone()
             return row is not None
+
+    async def wallet_summary(self, telegram_id: int) -> tuple[int, int, int]:
+        async with self.connect() as db:
+            wallet = await (await db.execute(
+                "SELECT balance_toman FROM wallets WHERE telegram_id=?", (telegram_id,)
+            )).fetchone()
+            if not wallet:
+                raise ValueError("Wallet does not exist")
+            stats = await (await db.execute(
+                "SELECT count(*),coalesce(sum(reward_toman),0) FROM referrals WHERE referrer_telegram_id=?",
+                (telegram_id,),
+            )).fetchone()
+            return int(wallet[0]), int(stats[0]), int(stats[1])
+
+    async def create_wallet_topup(self, telegram_id: int, amount_toman: int) -> int:
+        if not 10_000 <= amount_toman <= 100_000_000:
+            raise ValueError("Top-up amount out of range")
+        async with self.connect() as db:
+            cur = await db.execute(
+                "INSERT INTO wallet_topups(telegram_id,amount_toman,status,created_at) VALUES(?,?,'waiting_receipt',?)",
+                (telegram_id, amount_toman, now_iso()),
+            )
+            await db.commit()
+            return int(cur.lastrowid)
+
+    async def select_wallet_receipt(self, topup_id: int, telegram_id: int) -> bool:
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (await db.execute(
+                "SELECT 1 FROM wallet_topups WHERE id=? AND telegram_id=? AND status='waiting_receipt'",
+                (topup_id, telegram_id),
+            )).fetchone()
+            if not row:
+                await db.rollback()
+                return False
+            await db.execute(
+                "INSERT INTO wallet_receipt_selections(telegram_id,topup_id) VALUES(?,?) "
+                "ON CONFLICT(telegram_id) DO UPDATE SET topup_id=excluded.topup_id",
+                (telegram_id, topup_id),
+            )
+            await db.commit()
+            return True
+
+    async def selected_wallet_receipt(self, telegram_id: int) -> int | None:
+        async with self.connect() as db:
+            row = await (await db.execute(
+                "SELECT topup_id FROM wallet_receipt_selections WHERE telegram_id=?",
+                (telegram_id,),
+            )).fetchone()
+            return int(row[0]) if row else None
+
+    async def submit_wallet_receipt(self, topup_id: int, telegram_id: int,
+                                    file_id: str, unique_id: str):
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (await db.execute(
+                "SELECT * FROM wallet_topups WHERE id=? AND telegram_id=? AND status='waiting_receipt'",
+                (topup_id, telegram_id),
+            )).fetchone()
+            used = await (await db.execute(
+                "SELECT 1 FROM card_payments WHERE receipt_unique_id=?", (unique_id,)
+            )).fetchone()
+            if not row or used:
+                await db.rollback()
+                return None
+            try:
+                await db.execute(
+                    "UPDATE wallet_topups SET status='pending_review',receipt_file_id=?,receipt_unique_id=? WHERE id=?",
+                    (file_id, unique_id, topup_id),
+                )
+            except sqlite3.IntegrityError:
+                await db.rollback()
+                return None
+            await db.execute("DELETE FROM wallet_receipt_selections WHERE telegram_id=?", (telegram_id,))
+            await db.commit()
+            return row
+
+    async def pending_wallet_topups(self):
+        async with self.connect() as db:
+            return await (await db.execute(
+                "SELECT * FROM wallet_topups WHERE status='pending_review' ORDER BY id LIMIT 25"
+            )).fetchall()
+
+    async def review_wallet_topup(self, topup_id: int, admin_id: int, approve: bool):
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (await db.execute(
+                "SELECT * FROM wallet_topups WHERE id=? AND status='pending_review'", (topup_id,)
+            )).fetchone()
+            if not row:
+                await db.rollback()
+                return None
+            now = now_iso()
+            await db.execute(
+                "UPDATE wallet_topups SET status=?,reviewed_by=?,reviewed_at=? WHERE id=?",
+                ("approved" if approve else "rejected", admin_id, now, topup_id),
+            )
+            if approve:
+                await db.execute(
+                    "UPDATE wallets SET balance_toman=balance_toman+? WHERE telegram_id=?",
+                    (row["amount_toman"], row["telegram_id"]),
+                )
+                balance = await (await db.execute(
+                    "SELECT balance_toman FROM wallets WHERE telegram_id=?", (row["telegram_id"],)
+                )).fetchone()
+                await db.execute(
+                    "INSERT INTO wallet_transactions(telegram_id,amount_toman,balance_after,kind,reference,created_at) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (row["telegram_id"], row["amount_toman"], balance[0], "topup", f"topup:{topup_id}", now),
+                )
+            await db.commit()
+            return row
+
+    async def claim_wallet_payment(self, order_id: int, telegram_id: int):
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            order = await (await db.execute(
+                "SELECT * FROM orders WHERE id=? AND telegram_id=? AND status='pending'",
+                (order_id, telegram_id),
+            )).fetchone()
+            if not order or order["toman_amount"] <= 0:
+                await db.rollback()
+                return None
+            cur = await db.execute(
+                "UPDATE wallets SET balance_toman=balance_toman-? "
+                "WHERE telegram_id=? AND balance_toman>=?",
+                (order["toman_amount"], telegram_id, order["toman_amount"]),
+            )
+            if cur.rowcount != 1:
+                await db.rollback()
+                return None
+            await db.execute(
+                "UPDATE orders SET status='processing',updated_at=? WHERE id=?",
+                (now_iso(), order_id),
+            )
+            balance = await (await db.execute(
+                "SELECT balance_toman FROM wallets WHERE telegram_id=?", (telegram_id,)
+            )).fetchone()
+            await db.execute(
+                "INSERT INTO wallet_transactions(telegram_id,amount_toman,balance_after,kind,reference,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (telegram_id, -order["toman_amount"], balance[0], "purchase", f"order:{order_id}", now_iso()),
+            )
+            await db.commit()
+            return order
+
+    async def refund_failed_wallet_order(self, order_id: int) -> tuple[int, int] | None:
+        """Refund a failed, wallet-paid order once after manual service verification."""
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            order = await (await db.execute(
+                "SELECT * FROM orders WHERE id=? AND status='paid_error' AND provisioned_email IS NULL",
+                (order_id,),
+            )).fetchone()
+            debit = await (await db.execute(
+                "SELECT 1 FROM wallet_transactions WHERE reference=? AND kind='purchase'",
+                (f"order:{order_id}",),
+            )).fetchone()
+            if not order or not debit:
+                await db.rollback()
+                return None
+            amount = int(order["toman_amount"])
+            await db.execute(
+                "UPDATE orders SET status='refunded',updated_at=? WHERE id=?", (now_iso(), order_id),
+            )
+            await db.execute(
+                "UPDATE wallets SET balance_toman=balance_toman+? WHERE telegram_id=?",
+                (amount, order["telegram_id"]),
+            )
+            balance = await (await db.execute(
+                "SELECT balance_toman FROM wallets WHERE telegram_id=?", (order["telegram_id"],)
+            )).fetchone()
+            await db.execute(
+                "INSERT INTO wallet_transactions(telegram_id,amount_toman,balance_after,kind,reference,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (order["telegram_id"], amount, balance[0], "refund", f"refund:{order_id}", now_iso()),
+            )
+            await db.commit()
+            return int(order["telegram_id"]), amount
 
     async def has_accepted_terms(self, telegram_id: int, version: str) -> bool:
         async with self.connect() as db:
@@ -474,6 +725,12 @@ class Database:
             if not order:
                 await db.rollback()
                 return None
+            reused_topup = await (await db.execute(
+                "SELECT 1 FROM wallet_topups WHERE receipt_unique_id=?", (receipt_unique_id,)
+            )).fetchone()
+            if reused_topup:
+                await db.rollback()
+                return None
             try:
                 await db.execute(
                     "INSERT INTO card_payments(order_id,receipt_file_id,receipt_unique_id,submitted_at) VALUES(?,?,?,?)",
@@ -602,13 +859,52 @@ class Database:
 
     async def mark_order_result(
         self, order_id: int, status: str, email: str | None = None, error: str | None = None
-    ) -> None:
+    ) -> tuple[int, int] | None:
+        awarded = None
         async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
             await db.execute(
                 "UPDATE orders SET status=?,provisioned_email=?,error=?,updated_at=? WHERE id=?",
                 (status, email, error, now_iso(), order_id),
             )
+            if status == "complete":
+                order = await (await db.execute(
+                    "SELECT telegram_id,kind,toman_amount FROM orders WHERE id=?", (order_id,)
+                )).fetchone()
+                if order and order["kind"] == "buy":
+                    earlier = await (await db.execute(
+                        "SELECT 1 FROM orders WHERE telegram_id=? AND kind='buy' "
+                    "AND status='complete' AND toman_amount>0 AND id<>? LIMIT 1",
+                        (order["telegram_id"], order_id),
+                    )).fetchone()
+                    referral = await (await db.execute(
+                        "SELECT referrer_telegram_id FROM referrals WHERE invited_telegram_id=? "
+                        "AND rewarded_order_id IS NULL",
+                        (order["telegram_id"],),
+                    )).fetchone()
+                    if referral and not earlier and order["toman_amount"] > 0:
+                        reward = order["toman_amount"] // 10
+                        await db.execute(
+                            "UPDATE referrals SET rewarded_order_id=?,reward_toman=? WHERE invited_telegram_id=?",
+                            (order_id, reward, order["telegram_id"]),
+                        )
+                        if reward:
+                            await db.execute(
+                                "UPDATE wallets SET balance_toman=balance_toman+? WHERE telegram_id=?",
+                                (reward, referral["referrer_telegram_id"]),
+                            )
+                            balance = await (await db.execute(
+                                "SELECT balance_toman FROM wallets WHERE telegram_id=?",
+                                (referral["referrer_telegram_id"],),
+                            )).fetchone()
+                            await db.execute(
+                                "INSERT INTO wallet_transactions(telegram_id,amount_toman,balance_after,kind,reference,created_at) "
+                                "VALUES(?,?,?,?,?,?)",
+                                (referral["referrer_telegram_id"], reward, balance[0], "referral", f"referral:{order_id}", now_iso()),
+                            )
+                            awarded = (int(referral["referrer_telegram_id"]), int(reward))
             await db.commit()
+        return awarded
 
     async def trial_used(self, telegram_id: int, period: str) -> bool:
         async with self.connect() as db:

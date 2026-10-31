@@ -150,6 +150,81 @@ class DatabaseTests(IsolatedAsyncioTestCase):
         self.assertTrue(all(p.stars_price == 0 for p in plans))
         self.assertEqual(150_000, plans[1].toman_price)
 
+    async def test_new_wallet_bonus_is_given_once(self):
+        self.assertEqual(5000, (await self.db.wallet_summary(123))[0])
+        await self.db.upsert_user(123, "tester", "Updated")
+        self.assertEqual(5000, (await self.db.wallet_summary(123))[0])
+        async with self.db.connect() as db:
+            count = await (await db.execute(
+                "SELECT count(*) FROM wallet_transactions WHERE reference='welcome:123'"
+            )).fetchone()
+        self.assertEqual(1, count[0])
+
+    async def test_referral_credits_only_first_completed_purchase_once(self):
+        await self.db.upsert_user(456, "friend", "Friend", 123)
+        await self.db.upsert_user(456, "friend", "Friend", 999)
+        plan = await self.db.get_plan("gb20")
+        first, _ = await self.db.create_order(456, "buy", plan, "friend1")
+        await self.db.mark_order_result(first, "paid_error")
+        self.assertEqual(5000, (await self.db.wallet_summary(123))[0])
+        await self.db.mark_order_result(first, "complete", email="friend1")
+        await self.db.mark_order_result(first, "complete", email="friend1")
+        second, _ = await self.db.create_order(456, "buy", plan, "friend2")
+        await self.db.mark_order_result(second, "complete", email="friend2")
+        self.assertEqual((20000, 1, 15000), await self.db.wallet_summary(123))
+        async with self.db.connect() as db:
+            row = await (await db.execute(
+                "SELECT rewarded_order_id,reward_toman FROM referrals WHERE invited_telegram_id=456"
+            )).fetchone()
+        self.assertEqual((first, 15000), tuple(row))
+
+    async def test_referral_cannot_attach_to_existing_user_or_self(self):
+        await self.db.upsert_user(123, "tester", "Tester", 123)
+        await self.db.upsert_user(456, "friend", "Friend")
+        await self.db.upsert_user(456, "friend", "Friend", 123)
+        self.assertEqual(0, (await self.db.wallet_summary(123))[1])
+
+    async def test_free_first_service_does_not_consume_paid_referral_reward(self):
+        await self.db.upsert_user(456, "friend", "Friend", 123)
+        plan = await self.db.get_plan("gb10")
+        free_id, _ = await self.db.create_order(456, "buy", plan, "free")
+        async with self.db.connect() as db:
+            await db.execute("UPDATE orders SET toman_amount=0,discount_percent=100 WHERE id=?", (free_id,))
+            await db.commit()
+        await self.db.mark_order_result(free_id, "complete", email="free")
+        paid_id, _ = await self.db.create_order(456, "buy", plan, "paid")
+        await self.db.mark_order_result(paid_id, "complete", email="paid")
+        self.assertEqual((12500, 1, 7500), await self.db.wallet_summary(123))
+
+    async def test_wallet_topup_and_purchase_are_atomic_and_idempotent(self):
+        topup_id = await self.db.create_wallet_topup(123, 150000)
+        self.assertTrue(await self.db.select_wallet_receipt(topup_id, 123))
+        self.assertIsNotNone(await self.db.submit_wallet_receipt(topup_id, 123, "file", "unique"))
+        self.assertIsNone(await self.db.submit_wallet_receipt(topup_id, 123, "file", "unique"))
+        self.assertIsNotNone(await self.db.review_wallet_topup(topup_id, 999, True))
+        self.assertIsNone(await self.db.review_wallet_topup(topup_id, 999, True))
+        self.assertEqual(155000, (await self.db.wallet_summary(123))[0])
+        plan = await self.db.get_plan("gb20")
+        order_id, _ = await self.db.create_order(123, "buy", plan, "walletuser")
+        self.assertIsNotNone(await self.db.claim_wallet_payment(order_id, 123))
+        self.assertIsNone(await self.db.claim_wallet_payment(order_id, 123))
+        self.assertEqual(5000, (await self.db.wallet_summary(123))[0])
+        another, _ = await self.db.create_order(123, "buy", plan, "walletuser2")
+        self.assertIsNone(await self.db.claim_wallet_payment(another, 123))
+        self.assertEqual("pending", (await self.db.get_order(another))["status"])
+        await self.db.mark_order_result(order_id, "paid_error")
+        self.assertEqual((123, 150000), await self.db.refund_failed_wallet_order(order_id))
+        self.assertIsNone(await self.db.refund_failed_wallet_order(order_id))
+        self.assertEqual(155000, (await self.db.wallet_summary(123))[0])
+
+    async def test_existing_account_migration_does_not_get_signup_bonus(self):
+        async with self.db.connect() as db:
+            await db.execute("INSERT INTO users(telegram_id,full_name,created_at,updated_at) VALUES(789,'Old',?,?)", ("now", "now"))
+            await db.commit()
+        await self.db.initialize()
+        await self.db.upsert_user(789, None, "Old")
+        self.assertEqual(0, (await self.db.wallet_summary(789))[0])
+
     async def test_plan_edits_survive_bot_database_initialization(self):
         async with self.db.connect() as db:
             await db.execute("UPDATE plans SET toman_price=123456,enabled=0 WHERE code='gb10'")

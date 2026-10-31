@@ -1,8 +1,8 @@
 # Damavand Bot
 
 Persian Telegram storefront for 3x-ui. It manages optional channel membership and Terms checks,
-plans, monthly trials, renewals, discounts, Telegram Stars, and optional
-card-receipt orders. A card receipt is **not** proof of payment: an admin must
+plans, monthly trials, renewals, discounts, wallets, and referral rewards.
+New plan and renewal payments use the wallet. Card-to-card transfers top up the wallet after admin approval. A card receipt is **not** proof of payment: an admin must
 verify the deposit independently before approving it in Telegram.
 
 ## One-command installation (Ubuntu/Debian)
@@ -52,8 +52,8 @@ ssh -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
 Then open <http://127.0.0.1:8765> and sign in. The panel shows users and
 orders and edits plans/prices, user- or plan-specific discounts, assigned
 subscription links for existing users, channel ID/join link/support, 3x-ui settings,
-payment method/card details, trial settings, and versioned Terms. The Bot buttons
-page enables or disables the six user-facing menu buttons; the admin-only discount
+payment method/card details, trial settings, wallet balances, top-ups, referrals, wallet ledger, and versioned Terms. The Bot buttons
+page enables or disables the seven user-facing menu buttons; the admin-only discount
 button is no longer shown. Disabling a button also blocks its new entry requests,
 while already-started orders can still finish. The sidebar
 provides English and Persian navigation. Settings are grouped into Bot,
@@ -74,10 +74,29 @@ bound to that account's numeric ID and appears in My Services. Because Telegram
 usernames can change or be reassigned, use the numeric ID when available.
 Imported links are for viewing in My Services; assigning one does not modify
 the 3x-ui client or enable bot-managed renewal for it.
-Config
-changes restart the bot; plan and discount changes apply immediately. Receipt
-approval and failed-order retries remain in Telegram, where the existing
-provisioning flow handles them.
+Config changes restart the bot; plan and discount changes apply immediately.
+Wallet top-ups can be approved in the bot or the panel, but verify the actual bank deposit first. The bot also supports `/pendingtopups` for admins.
+Existing card orders and already paid Stars orders continue through their earlier fulfillment paths; new checkout uses the wallet.
+
+## Wallet and referrals
+
+The first `/start` creates a wallet with **5,000 toman** for a new Telegram account.
+Existing accounts are migrated with a zero balance. Each user can open **Wallet and referrals**
+or `/wallet` to see their balance and personal `https://t.me/<bot>?start=ref_<telegram_id>` link.
+The referral attaches only when a new account first starts the bot through that link;
+it cannot be reassigned later. The referrer receives **10% of the discounted toman amount**
+after the invited user’s first completed, non-free purchase. Renewals and later purchases
+do not generate another reward. A 100% discount does not consume the paid referral reward.
+
+To fund the wallet, a user enters a toman amount, transfers it to the configured card,
+and sends a receipt photo. Admin approval credits the wallet once; rejecting it credits
+nothing. The user then presses **Pay from wallet** on the order. The balance is checked and
+debited atomically. If service creation fails, the paid order remains available for admin
+retry without another wallet debit. The wallet ledger in the panel records every credit
+and debit. If a failed wallet order cannot be fulfilled, verify in 3x-ui that the
+service was neither created nor renewed before using the admin command
+`/refundwallet <order_id>`; it refunds that order once. New top-ups require
+card-to-card payment to be enabled in Payment settings.
 
 The panel has a password, rate-limited sign-in, CSRF tokens, restrictive
 browser headers, a local-only listener, and no root privileges. Treat its

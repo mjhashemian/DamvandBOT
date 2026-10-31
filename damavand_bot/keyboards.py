@@ -13,7 +13,7 @@ from .db import Plan
 from .menu import DEFAULT_ENABLED_BUTTONS, MENU_BUTTONS
 
 
-BUY, RENEW, MY_SERVICES, TRIAL, SUPPORT, CHANNEL = (label for _, label in MENU_BUTTONS)
+BUY, RENEW, MY_SERVICES, WALLET, TRIAL, SUPPORT, CHANNEL = (label for _, label in MENU_BUTTONS)
 
 
 def main_menu(enabled_buttons: frozenset[str] = DEFAULT_ENABLED_BUTTONS, channel_enabled: bool = True) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
@@ -90,6 +90,26 @@ def card_receipt_keyboard(order_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📷 ارسال رسید پرداخت", callback_data=f"card:receipt:{order_id}")]
         ]
     )
+
+
+def wallet_checkout_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ پرداخت از کیف پول", callback_data=f"wallet:pay:{order_id}")],
+        [InlineKeyboardButton(text="➕ شارژ کیف پول", callback_data="wallet:topup")],
+    ])
+
+
+def wallet_topup_keyboard(topup_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📷 ارسال رسید شارژ", callback_data=f"wallet:receipt:{topup_id}")],
+    ])
+
+
+def wallet_review_keyboard(topup_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ تأیید شارژ", callback_data=f"wallet:approve:{topup_id}"),
+         InlineKeyboardButton(text="❌ رد شارژ", callback_data=f"wallet:reject:{topup_id}")],
+    ])
 
 
 def discount_choice_keyboard(order_id: int) -> InlineKeyboardMarkup:

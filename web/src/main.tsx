@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { LayoutDashboard, Users, Package, Receipt, Tags, BadgePercent, Settings, ScrollText, Activity, LogOut, Languages, Menu, Mountain, ToggleRight } from 'lucide-react'
+import { LayoutDashboard, Users, Wallet, Package, Receipt, Tags, BadgePercent, Settings, ScrollText, Activity, LogOut, Languages, Menu, Mountain, ToggleRight } from 'lucide-react'
 import { Button } from './components/ui/button'
 import { Sidebar, SidebarHeader, SidebarContent, SidebarFooter, SidebarMenuButton } from './components/ui/sidebar'
 import './index.css'
@@ -10,6 +10,7 @@ type Language = 'en' | 'fa'
 const routes = [
   ['/', 'Overview', 'نمای کلی', LayoutDashboard],
   ['/users', 'Users', 'کاربران', Users],
+  ['/wallets', 'Wallets and referrals', 'کیف پول و معرفی', Wallet],
   ['/services', 'Assigned services', 'سرویس‌های اختصاصی', Package],
   ['/orders', 'Orders', 'سفارش‌ها', Receipt],
   ['/plans', 'Plans', 'پلن‌ها', Tags],
@@ -21,7 +22,7 @@ const routes = [
 ] as const
 
 const translations: Record<string, string> = {
-  'Overview':'نمای کلی','Users':'کاربران','Assigned services':'سرویس‌های اختصاصی','Orders':'سفارش‌ها','Plans':'پلن‌ها','Discounts':'تخفیف‌ها','Bot buttons':'دکمه‌های ربات','Settings':'تنظیمات','Terms and conditions':'قوانین و شرایط','Audit':'گزارش فعالیت',
+  'Overview':'نمای کلی','Users':'کاربران','Wallets and referrals':'کیف پول و معرفی','Assigned services':'سرویس‌های اختصاصی','Orders':'سفارش‌ها','Plans':'پلن‌ها','Discounts':'تخفیف‌ها','Bot buttons':'دکمه‌های ربات','Settings':'تنظیمات','Terms and conditions':'قوانین و شرایط','Audit':'گزارش فعالیت',
   'Sign in':'ورود','Panel password':'رمز پنل','Invalid password.':'رمز نادرست است.','Try again':'دوباره تلاش کنید',
   'Bot settings':'تنظیمات ربات','Payment settings':'تنظیمات پرداخت','Channel settings':'تنظیمات کانال','Trial settings':'تنظیمات سرویس آزمایشی',
   'Welcome settings':'تنظیمات خوش‌آمدگویی','Before-START description':'توضیحات پیش از شروع','Welcome message':'پیام خوش‌آمدگویی',
@@ -29,6 +30,7 @@ const translations: Record<string, string> = {
   'Bot Token':'توکن ربات','Admin Telegram IDs':'شناسه‌های تلگرام مدیران','Support username':'نام کاربری پشتیبانی','3x-ui panel URL':'نشانی پنل 3x-ui','3x-ui API token':'توکن API پنل 3x-ui','Subscription base URL':'نشانی پایه اشتراک',
   'Channel username':'نام کاربری کانال','Channel ID':'شناسه کانال','Channel join link':'لینک عضویت کانال','Require channel membership':'الزام عضویت در کانال',
   'Card-to-card payment':'پرداخت کارت‌به‌کارت','Card number':'شماره کارت','Cardholder name':'نام صاحب کارت','Payment instructions':'راهنمای پرداخت',
+  'Wallet balances':'موجودی کیف پول‌ها','Balance (toman)':'موجودی (تومان)','Wallet top-ups':'شارژهای کیف پول','Amount (toman)':'مبلغ (تومان)','Review':'بررسی','Approve':'تأیید','Reject':'رد','Referrals':'معرفی‌ها','Referrer':'معرف','Invited user':'کاربر دعوت‌شده','First order':'اولین سفارش','Reward (toman)':'پاداش (تومان)','Wallet ledger':'گردش کیف پول','Change (toman)':'تغییر (تومان)','Type':'نوع','Reference':'مرجع',
   'Free trial':'سرویس آزمایشی','Trial traffic (MB)':'حجم آزمایشی (مگابایت)','Trial duration (days)':'مدت آزمایشی (روز)',
   'Save all settings':'ذخیره همه تنظیمات','Save plan':'ذخیره پلن','Add plan':'افزودن پلن','Persian title':'عنوان فارسی','Traffic GB':'حجم (گیگابایت)','Days':'روز','Toman':'تومان','Stars':'استارز','Enabled':'فعال','Yes':'بله','No':'خیر',
   'Assign an existing service':'اختصاص سرویس موجود','Telegram ID or @username':'شناسه تلگرام یا نام کاربری','Plan':'پلن','Service label (optional)':'نام سرویس (اختیاری)','Subscription link':'لینک اشتراک','Assign service':'اختصاص سرویس','Remove':'حذف',
@@ -54,7 +56,8 @@ const translations: Record<string, string> = {
   'users':'کاربران','orders':'سفارش‌ها','services':'سرویس‌ها','trials':'آزمایشی‌ها','Receipts awaiting review':'رسیدهای در انتظار بررسی',
   'Latest 200 orders. Receipt approval and retries remain in the bot, where provisioning is transactional.':'۲۰۰ سفارش اخیر. تأیید رسید و تلاش مجدد برای ساخت سرویس همچنان در ربات انجام می‌شود.',
   'Plan saved':'پلن ذخیره شد','Discount updated':'تخفیف به‌روزرسانی شد','Terms saved; users must accept again':'قوانین ذخیره شد؛ کاربران باید دوباره آن را بپذیرند',
-  'Active':'فعال','pending':'در انتظار','processing':'در حال پردازش','paid':'پرداخت‌شده','paid_error':'خطای ساخت','card_pending_review':'در انتظار بررسی رسید','completed':'تکمیل‌شده','failed':'ناموفق',
+  'Active':'فعال','pending':'در انتظار','pending_review':'در انتظار بررسی','processing':'در حال پردازش','paid':'پرداخت‌شده','approved':'تأییدشده','rejected':'ردشده','refunded':'بازپرداخت‌شده','paid_error':'خطای ساخت','card_pending_review':'در انتظار بررسی رسید','completed':'تکمیل‌شده','failed':'ناموفق',
+  'welcome':'هدیه خوش‌آمدگویی','topup':'شارژ','purchase':'خرید','referral':'معرفی','refund':'بازپرداخت',
   'buy':'خرید','renew':'تمدید','trial':'آزمایشی','Saved':'ذخیره‌شده',
   'The panel is ready. Add the Telegram bot token, admin IDs, channel, 3x-ui API and payment settings in':'پنل آماده است. توکن ربات، شناسه مدیران، کانال، API پنل 3x-ui و تنظیمات پرداخت را در',
   '. The bot will start after valid settings are saved.':' وارد کنید. ربات پس از ذخیره تنظیمات معتبر شروع می‌شود.',

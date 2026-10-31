@@ -1,8 +1,9 @@
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from aiohttp import CookieJar
 from aiohttp.test_utils import TestClient, TestServer
@@ -65,6 +66,35 @@ class PanelTests(IsolatedAsyncioTestCase):
         with panel.database() as db:
             plan = db.execute("SELECT title_fa,traffic_gb,enabled FROM plans WHERE code='gb10'").fetchone()
         self.assertEqual(("Test plan", 12, 0), tuple(plan))
+
+    async def test_wallet_page_and_topup_review_are_authenticated_and_once_only(self):
+        db = Database(Path(management.read_config()["DB_PATH"]))
+        await db.upsert_user(123, "tester", "Tester")
+        topup_id = await db.create_wallet_topup(123, 150000)
+        await db.submit_wallet_receipt(topup_id, 123, "photo", "unique-photo")
+        response = await self.client.get("/wallets", headers=self.headers, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        headers, login_csrf = await self.login_form(self.headers)
+        response = await self.client.post("/login", headers=headers, data={
+            "password": "a-very-long-panel-password", "login_csrf": login_csrf,
+        }, allow_redirects=False)
+        csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
+        response = await self.client.get("/wallets", headers=self.headers)
+        self.assertIn("Wallet balances", await response.text())
+        payload = {"topup_id": str(topup_id), "decision": "approve"}
+        response = await self.client.post("/wallets", headers=self.headers,
+                                          data={**payload, "csrf": "wrong"}, allow_redirects=False)
+        self.assertEqual(403, response.status)
+        bot = SimpleNamespace(send_message=AsyncMock(), session=SimpleNamespace(close=AsyncMock()))
+        with patch("aiogram.Bot", return_value=bot):
+            response = await self.client.post("/wallets", headers=self.headers,
+                                              data={**payload, "csrf": csrf}, allow_redirects=False)
+        self.assertEqual(303, response.status)
+        self.assertEqual(155000, (await db.wallet_summary(123))[0])
+        response = await self.client.post("/wallets", headers=self.headers,
+                                          data={**payload, "csrf": csrf}, allow_redirects=False)
+        self.assertEqual(409, response.status)
+        self.assertEqual(155000, (await db.wallet_summary(123))[0])
 
     async def test_host_guard_and_secret_not_rendered(self):
         response = await self.client.get("/login", headers={"Host": "malicious.example"})

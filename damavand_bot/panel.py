@@ -31,7 +31,7 @@ LOGIN_CHALLENGES: dict[str, tuple[float, str]] = {}
 FAILURES: dict[str, list[float]] = {}
 COOKIE = "damavand_panel"
 LOGIN_COOKIE = "damavand_login"
-NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/settings/reveal", "/buttons", "/terms"})
+NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/settings/reveal", "/buttons", "/terms", "/wallets"})
 SETTING_GROUPS = (
     ("Bot settings", ("BOT_TOKEN", "ADMIN_IDS", "SUPPORT_USERNAME", "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE")),
     ("Welcome settings", ("BOT_DESCRIPTION", "WELCOME_MESSAGE")),
@@ -189,6 +189,94 @@ async def users(request: web.Request):
         rows = db.execute("SELECT telegram_id,username,full_name,terms_version,created_at FROM users ORDER BY updated_at DESC LIMIT 200").fetchall()
     body = "".join(f"<tr><td>{r['telegram_id']}</td><td>{esc(r['username'])}</td><td>{esc(r['full_name'])}</td><td>{esc(r['terms_version'])}</td><td>{esc(r['created_at'])}</td></tr>" for r in rows)
     return page("Users", f'<div class="card scroll"><p>Latest 200 users</p><table><tr><th>Telegram ID</th><th>Username</th><th>Name</th><th>Terms</th><th>Joined</th></tr>{body}</table></div>', csrf)
+
+
+async def wallets(request: web.Request):
+    csrf = token(request)
+    with database() as db:
+        balances = db.execute(
+            "SELECT w.telegram_id,u.username,w.balance_toman FROM wallets w "
+            "JOIN users u ON u.telegram_id=w.telegram_id ORDER BY w.telegram_id DESC LIMIT 200"
+        ).fetchall()
+        topups = db.execute(
+            "SELECT id,telegram_id,amount_toman,status,created_at FROM wallet_topups ORDER BY id DESC LIMIT 100"
+        ).fetchall()
+        referrals = db.execute(
+            "SELECT referrer_telegram_id,invited_telegram_id,rewarded_order_id,reward_toman,created_at "
+            "FROM referrals ORDER BY created_at DESC LIMIT 100"
+        ).fetchall()
+        transactions = db.execute(
+            "SELECT telegram_id,amount_toman,kind,reference,created_at "
+            "FROM wallet_transactions ORDER BY id DESC LIMIT 100"
+        ).fetchall()
+    balance_rows = "".join(
+        f"<tr><td>{r['telegram_id']}</td><td>{esc('@' + r['username'] if r['username'] else '')}</td>"
+        f"<td>{r['balance_toman']:,}</td></tr>" for r in balances
+    )
+    topup_rows = ""
+    for r in topups:
+        actions = (
+            f'<form method="post" action="/wallets"><input type="hidden" name="csrf" value="{esc(csrf)}">'
+            f'<input type="hidden" name="topup_id" value="{r["id"]}">'
+            '<button name="decision" value="approve">Approve</button> '
+            '<button name="decision" value="reject" class="danger">Reject</button></form>'
+            if r["status"] == "pending_review" else ""
+        )
+        topup_rows += (
+            f"<tr><td>{r['id']}</td><td>{r['telegram_id']}</td><td>{r['amount_toman']:,}</td>"
+            f"<td>{esc(r['status'])}</td><td>{esc(r['created_at'])}</td><td>{actions}</td></tr>"
+        )
+    referral_rows = "".join(
+        f"<tr><td>{r['referrer_telegram_id']}</td><td>{r['invited_telegram_id']}</td>"
+        f"<td>{esc(r['rewarded_order_id'])}</td><td>{r['reward_toman']:,}</td><td>{esc(r['created_at'])}</td></tr>"
+        for r in referrals
+    )
+    transaction_rows = "".join(
+        f"<tr><td>{r['telegram_id']}</td><td>{r['amount_toman']:+,}</td><td>{esc(r['kind'])}</td>"
+        f"<td>{esc(r['reference'])}</td><td>{esc(r['created_at'])}</td></tr>" for r in transactions
+    )
+    content = (
+        '<p class="muted">New users receive 5,000 toman. A referrer earns 10% of the invited user’s first completed purchase. Verify the bank transfer before approving a top-up.</p>'
+        f'<div class="card scroll"><h2>Wallet balances</h2><table><tr><th>Telegram ID</th><th>Username</th><th>Balance (toman)</th></tr>{balance_rows}</table></div>'
+        f'<div class="card scroll"><h2>Wallet top-ups</h2><table><tr><th>ID</th><th>User</th><th>Amount (toman)</th><th>Status</th><th>Created</th><th>Review</th></tr>{topup_rows}</table></div>'
+        f'<div class="card scroll"><h2>Referrals</h2><table><tr><th>Referrer</th><th>Invited user</th><th>First order</th><th>Reward (toman)</th><th>Created</th></tr>{referral_rows}</table></div>'
+        f'<div class="card scroll"><h2>Wallet ledger</h2><table><tr><th>User</th><th>Change (toman)</th><th>Type</th><th>Reference</th><th>Created</th></tr>{transaction_rows}</table></div>'
+    )
+    return page("Wallets and referrals", content, csrf, request.query.get("message", ""))
+
+
+async def review_wallet(request: web.Request):
+    csrf = token(request)
+    data = await form(request, csrf)
+    try:
+        topup_id = int(str(data.get("topup_id", "")))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text="Invalid top-up ID") from exc
+    decision = str(data.get("decision", ""))
+    if decision not in {"approve", "reject"}:
+        raise web.HTTPBadRequest(text="Invalid decision")
+    from .db import Database
+    topup = await Database(Path(read_config()["DB_PATH"])).review_wallet_topup(
+        topup_id, 0, decision == "approve"
+    )
+    if not topup:
+        raise web.HTTPConflict(text="Top-up was already reviewed")
+    with database() as db:
+        audit(db, "panel.wallet_topup_reviewed", {"topup_id": topup_id, "decision": decision})
+    try:
+        from aiogram import Bot
+        bot = Bot(read_config()["BOT_TOKEN"])
+        try:
+            await bot.send_message(
+                topup["telegram_id"],
+                f"✅ کیف پولت {topup['amount_toman']:,} تومان شارژ شد. حالا می‌تونی سفارش را از کیف پول پرداخت کنی."
+                if decision == "approve" else "❌ رسید شارژ کیف پول تأیید نشد. با پشتیبانی تماس بگیر.",
+            )
+        finally:
+            await bot.session.close()
+    except Exception:
+        logging.exception("Could not notify user about wallet top-up %s", topup_id)
+    raise web.HTTPSeeOther("/wallets?message=" + quote("Top-up reviewed"))
 
 
 def resolve_user(db: sqlite3.Connection, identifier: str) -> int:
@@ -468,7 +556,7 @@ async def buttons(request: web.Request):
     data = read_config()
     english = {
         "buy": "Buy service", "renew": "Renew service", "services": "My services",
-        "trial": "Trial service", "support": "Support", "channel": "Channel",
+        "wallet": "Wallet and referrals", "trial": "Trial service", "support": "Support", "channel": "Channel",
     }
     fields = []
     for name, persian in MENU_BUTTONS:
@@ -594,9 +682,9 @@ def make_app() -> web.Application:
     app.router.add_post("/login", login)
     app.router.add_post("/logout", logout)
     app.router.add_post("/settings/reveal", reveal_setting)
-    for path, handler in (("/", overview), ("/users", users), ("/services", manual_services), ("/orders", orders), ("/plans", plans), ("/discounts", discounts), ("/settings", settings), ("/buttons", buttons), ("/terms", terms), ("/audit", audit_log)):
+    for path, handler in (("/", overview), ("/users", users), ("/wallets", wallets), ("/services", manual_services), ("/orders", orders), ("/plans", plans), ("/discounts", discounts), ("/settings", settings), ("/buttons", buttons), ("/terms", terms), ("/audit", audit_log)):
         app.router.add_get(path, handler)
-    for path, handler in (("/plans", save_plan), ("/discounts", save_discount), ("/services", save_manual_service), ("/settings", save_settings), ("/buttons", save_buttons), ("/terms", save_terms)):
+    for path, handler in (("/wallets", review_wallet), ("/plans", save_plan), ("/discounts", save_discount), ("/services", save_manual_service), ("/settings", save_settings), ("/buttons", save_buttons), ("/terms", save_terms)):
         app.router.add_post(path, handler)
     return app
 

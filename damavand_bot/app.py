@@ -33,6 +33,7 @@ from .keyboards import (
     BUY,
     CHANNEL,
     MY_SERVICES,
+    WALLET,
     RENEW,
     SUPPORT,
     TRIAL,
@@ -47,6 +48,9 @@ from .keyboards import (
     service_actions,
     services_keyboard,
     terms_keyboard,
+    wallet_checkout_keyboard,
+    wallet_review_keyboard,
+    wallet_topup_keyboard,
 )
 from .xui import XUIClient, XUIError, XUINameTakenError
 from .welcome import WELCOME_BANNER, render_welcome
@@ -74,6 +78,10 @@ class NewServiceName(StatesGroup):
 
 class DiscountCodeInput(StatesGroup):
     waiting_for_code = State()
+
+
+class WalletTopupInput(StatesGroup):
+    waiting_for_amount = State()
 
 
 class AdminDiscountInput(StatesGroup):
@@ -236,39 +244,14 @@ async def _begin_checkout(
             reply_markup=demo_confirmation_keyboard(order_id),
         )
         return
-    if app.config.card_payment_enabled:
-        if not await app.db.begin_card_payment(order_id, user_id):
-            raise RuntimeError("Could not initialize card-payment order")
-        verb = "تمدید" if action == "renew" else "ساخت"
-        rial_price = order["toman_amount"] * 10
-        await app.bot.send_message(
-            chat_id,
-            f"لطفا مبلغ <code>{order['toman_amount']:,} تومان</code> "
-            f"(<code>{rial_price:,} ریال</code>) رو به مشخصات کارت زیر وارد کنید:\n\n"
-            f"شماره کارت: <code>{html.escape(app.config.card_payment_card_number)}</code>\n"
-            f"به نام: <b>{html.escape(app.config.card_payment_holder)}</b>\n\n"
-            f"پلن انتخابی: <b>{html.escape(plan_title)}</b> برای {verb}\n\n"
-            f"{html.escape(app.config.card_payment_instructions) + chr(10) + chr(10) if app.config.card_payment_instructions else ''}"
-            "بعد از انجام تراکنش دکمهٔ <b>ارسال رسید پرداخت</b> رو لمس کنید و "
-            "عکس رسیدتون رو برامون بفرستید.\n\n"
-            "لطفا پیش از تأیید انتقال، حتما نام صاحب کارت رو چک کنید؛ "
-            "مسئولیت واریز اشتباه با خودتونه.\n\n"
-            "سرویس فقط پس از تأیید مدیریت ساخته می‌شود.",
-            reply_markup=card_receipt_keyboard(order_id),
-        )
-        return
-    if order["stars_amount"] <= 0:
-        await app.bot.send_message(chat_id, "قیمت این پلن به Stars هنوز توسط مدیریت تنظیم نشده است.")
-        return
-    await app.bot.send_invoice(
-        chat_id=chat_id,
-        title=f"سرویس دماوند VPN - {plan_title}",
-        description=f"اعتبار {order['duration_days']} روز، بدون محدودیت دستگاه",
-        payload=order["invoice_payload"],
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label=plan_title, amount=order["stars_amount"])],
-        start_parameter=f"damavand-{order_id}",
+    balance, _, _ = await app.db.wallet_summary(user_id)
+    await app.bot.send_message(
+        chat_id,
+        f"پلن: <b>{html.escape(plan_title)}</b>\n"
+        f"قیمت نهایی: <code>{order['toman_amount']:,} تومان</code>\n"
+        f"موجودی کیف پول: <code>{balance:,} تومان</code>\n\n"
+        "برای پرداخت از کیف پول تأیید کن. اگر موجودی کافی نیست، ابتدا کیف پول را شارژ کن و سپس همین دکمه پرداخت را بزن.",
+        reply_markup=wallet_checkout_keyboard(order_id),
     )
 
 
@@ -361,7 +344,11 @@ async def _send_credentials(app: App, chat_id: int, envelope: dict, email: str) 
 async def start(message: Message) -> None:
     app = _app(message)
     user = message.from_user
-    await app.db.upsert_user(user.id, user.username, user.full_name)
+    start_parts = (getattr(message, "text", None) or "").split(maxsplit=1)
+    referrer_id = None
+    if len(start_parts) == 2 and re.fullmatch(r"ref_[1-9]\d{0,18}", start_parts[1]):
+        referrer_id = int(start_parts[1][4:])
+    await app.db.upsert_user(user.id, user.username, user.full_name, referrer_id)
     claimed_services = await app.db.claim_pending_services(user.id, user.username)
     welcome_text = html.escape(render_welcome(
         app.config.welcome_message, user.first_name or "دوست", app.config.channel_join_required
@@ -460,13 +447,11 @@ async def buy(message: Message) -> None:
             "🧪 حالت آزمایشی فعال است؛ مبلغی دریافت نمی‌شود و پس از تأیید، سرویس فوراً ساخته خواهد شد."
             if app.config.demo_mode
             else (
-                "💳 پرداخت کارت‌به‌کارت است؛ پس از ارسال رسید و تأیید مدیریت، سرویس ساخته می‌شود."
-                if app.config.card_payment_enabled
-                else "پرداخت داخل تلگرام با Stars انجام می‌شود."
+            "👛 پرداخت پلن از کیف پول انجام می‌شود. برای شارژ کیف پول، رسید کارت‌به‌کارت را بفرست."
             )
         ),
         reply_markup=plans_keyboard(
-            plans, "buy", demo_mode=app.config.demo_mode, card_payment=app.config.card_payment_enabled
+            plans, "buy", demo_mode=app.config.demo_mode, card_payment=True
         ),
     )
 
@@ -612,6 +597,39 @@ async def receive_discount_code(message: Message, state: FSMContext) -> None:
 @router.message(F.photo)
 async def receive_card_receipt(message: Message) -> None:
     app = _app(message)
+    wallet_topup_id = await app.db.selected_wallet_receipt(message.from_user.id)
+    if wallet_topup_id is not None:
+        if not await app.gate(message):
+            return
+        photo = message.photo[-1]
+        topup = await app.db.submit_wallet_receipt(
+            wallet_topup_id, message.from_user.id, photo.file_id, photo.file_unique_id,
+        )
+        if not topup:
+            await message.answer("این رسید قبلاً ثبت شده یا درخواست شارژ دیگر فعال نیست.")
+            return
+        caption = (
+            f"👛 <b>درخواست شارژ کیف پول #{wallet_topup_id}</b>\n"
+            f"کاربر: <code>{message.from_user.id}</code>\n"
+            f"مبلغ: <b>{topup['amount_toman']:,} تومان</b>\n"
+            "⚠️ پیش از تأیید، واریز واقعی، مبلغ و کارت مقصد را در بانک بررسی کن."
+        )
+        delivered = False
+        for admin_id in app.config.admin_ids:
+            try:
+                await app.bot.send_photo(
+                    admin_id, photo.file_id, caption=caption,
+                    reply_markup=wallet_review_keyboard(wallet_topup_id),
+                )
+                delivered = True
+            except Exception:
+                logger.exception("Could not deliver wallet receipt %s to admin %s", wallet_topup_id, admin_id)
+        await message.answer(
+            "✅ رسید شارژ ثبت شد. پس از بررسی و تأیید، کیف پولت شارژ می‌شود."
+            if delivered else
+            f"رسید ثبت شد، اما ارسال به مدیریت مشکل داشت. با پشتیبانی تماس بگیر و شماره شارژ {wallet_topup_id} را بگو."
+        )
+        return
     order_id = await app.db.selected_card_receipt(message.from_user.id)
     if order_id is None:
         return
@@ -650,6 +668,198 @@ async def receive_card_receipt(message: Message) -> None:
         if delivered else
         "رسید ثبت شد، اما ارسال آن به مدیریت موقتاً مشکل داشت. لطفاً با پشتیبانی تماس بگیر و شماره سفارش را بگو: " + str(order["id"])
     )
+
+
+@router.message(F.text == WALLET)
+@router.message(Command("wallet"))
+async def show_wallet(message: Message) -> None:
+    app = _app(message)
+    if not app.config.button_enabled("wallet") or not await app.gate(message):
+        return
+    balance, invited, earned = await app.db.wallet_summary(message.from_user.id)
+    bot_name = (await app.bot.get_me()).username
+    referral_link = f"https://t.me/{bot_name}?start=ref_{message.from_user.id}"
+    await message.answer(
+        f"👛 <b>کیف پول</b>\nموجودی: <code>{balance:,} تومان</code>\n\n"
+        f"🔗 <b>لینک معرفی تو</b>\n<code>{html.escape(referral_link)}</code>\n"
+        f"دوستان دعوت‌شده: {invited}\nپاداش‌های دریافت‌شده: <code>{earned:,} تومان</code>\n\n"
+        "وقتی دوستت اولین خریدش را با موفقیت انجام دهد، ۱۰٪ مبلغ همان خرید به کیف پولت اضافه می‌شود.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ شارژ کیف پول", callback_data="wallet:topup")],
+        ]),
+    )
+
+
+@router.callback_query(F.data == "wallet:topup")
+async def request_wallet_topup(callback: CallbackQuery, state: FSMContext) -> None:
+    app = _app(callback)
+    if not app.config.button_enabled("wallet") or not await app.gate(callback):
+        await callback.answer()
+        return
+    if not app.config.card_payment_enabled:
+        await callback.answer("شارژ کارت‌به‌کارت فعلاً غیرفعال است.", show_alert=True)
+        return
+    await state.set_state(WalletTopupInput.waiting_for_amount)
+    await callback.answer()
+    await callback.message.answer("مبلغ شارژ را به تومان وارد کن (حداقل ۱۰٬۰۰۰ تومان). مثال: <code>150000</code>")
+
+
+@router.message(WalletTopupInput.waiting_for_amount)
+async def receive_wallet_topup_amount(message: Message, state: FSMContext) -> None:
+    app = _app(message)
+    if not app.config.card_payment_enabled or not await app.gate(message):
+        return
+    raw = (message.text or "").replace(",", "").strip()
+    if not raw.isascii() or not raw.isdigit():
+        await message.answer("مبلغ را با رقم انگلیسی و به تومان وارد کن؛ مثال: <code>150000</code>.")
+        return
+    try:
+        topup_id = await app.db.create_wallet_topup(message.from_user.id, int(raw))
+    except ValueError:
+        await message.answer("مبلغ شارژ باید بین ۱۰٬۰۰۰ و ۱۰۰٬۰۰۰٬۰۰۰ تومان باشد.")
+        return
+    await state.clear()
+    amount = int(raw)
+    await message.answer(
+        f"مبلغ شارژ: <code>{amount:,} تومان</code> (<code>{amount * 10:,} ریال</code>)\n"
+        f"شماره کارت: <code>{html.escape(app.config.card_payment_card_number)}</code>\n"
+        f"به نام: <b>{html.escape(app.config.card_payment_holder)}</b>\n\n"
+        f"{html.escape(app.config.card_payment_instructions)}\n\n"
+        "نام صاحب کارت و مبلغ را بررسی کن. بعد از انتقال، دکمه ارسال رسید شارژ را بزن.",
+        reply_markup=wallet_topup_keyboard(topup_id),
+    )
+
+
+@router.callback_query(F.data.startswith("wallet:receipt:"))
+async def begin_wallet_receipt(callback: CallbackQuery, state: FSMContext) -> None:
+    app = _app(callback)
+    if not await app.gate(callback):
+        await callback.answer()
+        return
+    try:
+        topup_id = int(callback.data.rsplit(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("درخواست نامعتبر است.", show_alert=True)
+        return
+    if not await app.db.select_wallet_receipt(topup_id, callback.from_user.id):
+        await callback.answer("این درخواست شارژ دیگر منتظر رسید نیست.", show_alert=True)
+        return
+    await state.clear()
+    await callback.answer()
+    await callback.message.answer("حالا عکس رسید شارژ کیف پول را بفرست.")
+
+
+@router.callback_query(F.data.startswith("wallet:approve:") | F.data.startswith("wallet:reject:"))
+async def review_wallet_topup(callback: CallbackQuery) -> None:
+    app = _app(callback)
+    if not app.is_admin(callback.from_user.id):
+        await callback.answer("اجازه بررسی شارژ نداری.", show_alert=True)
+        return
+    try:
+        topup_id = int(callback.data.rsplit(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("درخواست نامعتبر است.", show_alert=True)
+        return
+    approve = callback.data.startswith("wallet:approve:")
+    topup = await app.db.review_wallet_topup(topup_id, callback.from_user.id, approve)
+    if not topup:
+        await callback.answer("این شارژ قبلاً بررسی شده است.", show_alert=True)
+        return
+    await callback.answer("شارژ تأیید شد." if approve else "شارژ رد شد.")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        logger.exception("Could not remove wallet review buttons for top-up %s", topup_id)
+    try:
+        if approve:
+            balance, _, _ = await app.db.wallet_summary(topup["telegram_id"])
+            await app.bot.send_message(
+                topup["telegram_id"],
+                f"✅ کیف پولت {topup['amount_toman']:,} تومان شارژ شد. موجودی: <code>{balance:,} تومان</code>. "
+                "حالا می‌تونی دکمه پرداخت سفارش را بزنی.",
+            )
+        else:
+            await app.bot.send_message(topup["telegram_id"], "❌ رسید شارژ کیف پول تأیید نشد. با پشتیبانی تماس بگیر.")
+    except TelegramAPIError:
+        logger.exception("Could not notify user about top-up %s", topup_id)
+    await callback.message.answer(f"شارژ #{topup_id} {'تأیید' if approve else 'رد'} شد.")
+
+
+@router.message(Command("pendingtopups"))
+async def admin_pending_topups(message: Message) -> None:
+    app = _app(message)
+    if not app.is_admin(message.from_user.id):
+        return
+    topups = await app.db.pending_wallet_topups()
+    if not topups:
+        await message.answer("شارژ منتظر بررسی وجود ندارد.")
+    for topup in topups:
+        await app.bot.send_photo(
+            message.from_user.id, topup["receipt_file_id"],
+            caption=f"شارژ #{topup['id']} | کاربر {topup['telegram_id']} | {topup['amount_toman']:,} تومان",
+            reply_markup=wallet_review_keyboard(topup["id"]),
+        )
+
+
+@router.callback_query(F.data.startswith("wallet:pay:"))
+async def pay_from_wallet(callback: CallbackQuery) -> None:
+    app = _app(callback)
+    if not await app.gate(callback):
+        await callback.answer()
+        return
+    try:
+        order_id = int(callback.data.rsplit(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("سفارش نامعتبر است.", show_alert=True)
+        return
+    order = await app.db.get_order(order_id)
+    if not order or order["telegram_id"] != callback.from_user.id or order["status"] != "pending":
+        await callback.answer("این سفارش دیگر قابل پرداخت نیست.", show_alert=True)
+        return
+    if order["kind"] == "buy" and order["target_email"]:
+        try:
+            if not await _client_name_available(app, order["target_email"]):
+                await callback.answer("نام سرویس قبلاً استفاده شده؛ دوباره خرید را با نام دیگری شروع کن.", show_alert=True)
+                return
+        except XUIError:
+            await callback.answer("بررسی نام فعلاً ممکن نیست؛ کمی بعد تلاش کن.", show_alert=True)
+            return
+    if order["kind"] == "renew":
+        try:
+            owned = await app.xui.clients_for_telegram(callback.from_user.id)
+        except XUIError:
+            await callback.answer("بررسی سرویس فعلاً ممکن نیست؛ کمی بعد تلاش کن.", show_alert=True)
+            return
+        if not any(_client_from_envelope(item).get("email") == order["target_email"] for item in owned):
+            await callback.answer("این سرویس دیگر به حساب تو متصل نیست؛ مبلغی کم نشد.", show_alert=True)
+            return
+    order = await app.db.claim_wallet_payment(order_id, callback.from_user.id)
+    if not order:
+        await callback.answer("موجودی کافی نیست یا سفارش قبلاً پرداخت شده است.", show_alert=True)
+        return
+    await callback.answer("پرداخت از کیف پول ثبت شد؛ سرویس در حال ساخت است…")
+    try:
+        envelope, email = await _provision_order(app, order, callback.from_user.id)
+        awarded = await app.db.mark_order_result(order_id, "complete", email=email)
+    except Exception as exc:
+        logger.exception("Wallet provisioning failed for order %s", order_id)
+        await app.db.mark_order_result(order_id, "paid_error", error=str(exc)[:1000])
+        await callback.message.answer("مبلغ سفارش در حال پیگیری است و دوباره دریافت نمی‌شود. ساخت سرویس خطا داشت؛ پشتیبانی بررسی می‌کند.")
+        await app.notify_admins(f"🚨 سفارش کیف پول #{order_id} خطا داشت: <code>{html.escape(str(exc)[:1000])}</code>\n/retryorder {order_id}")
+        return
+    if awarded:
+        try:
+            await app.bot.send_message(awarded[0], f"🎉 از اولین خرید دوستت <code>{awarded[1]:,} تومان</code> به کیف پولت اضافه شد.")
+        except TelegramAPIError:
+            logger.exception("Could not notify referrer about order %s", order_id)
+    try:
+        await _send_credentials(app, callback.from_user.id, envelope, email)
+    except Exception as exc:
+        logger.exception("Wallet credential delivery failed for order %s", order_id)
+        await app.db.mark_order_result(order_id, "complete", email=email, error=str(exc)[:1000])
+        await app.notify_admins(f"سرویس سفارش #{order_id} ساخته شد، اما ارسال خطا داشت؛ /resendorder {order_id}")
+        return
+    await app.notify_admins(f"✅ سفارش کیف پول #{order_id} برای <code>{callback.from_user.id}</code> ساخته شد.")
 
 
 @router.callback_query(F.data.startswith("card:receipt:"))
@@ -742,27 +952,7 @@ async def reject_card_payment(callback: CallbackQuery) -> None:
 
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery) -> None:
-    app = _app(query)
-    order = await app.db.get_order_for_checkout(query.invoice_payload, query.from_user.id)
-    valid = bool(
-        order
-        and query.currency == "XTR"
-        and query.total_amount == order["stars_amount"]
-    )
-    error_message = "سفارش معتبر نیست یا قیمت آن تغییر کرده است."
-    if valid and order["kind"] == "buy" and order["target_email"]:
-        try:
-            if not await _client_name_available(app, order["target_email"]):
-                valid = False
-                error_message = "این نام سرویس قبلاً استفاده شده؛ لطفاً نام دیگری انتخاب کن."
-        except XUIError:
-            logger.exception("Could not check client name before Stars payment")
-            valid = False
-            error_message = "بررسی نام سرویس موقتاً ممکن نیست؛ کمی بعد دوباره تلاش کن."
-    await query.answer(
-        ok=valid,
-        error_message=None if valid else error_message,
-    )
+    await query.answer(ok=False, error_message="پرداخت مستقیم غیرفعال شده است؛ لطفاً از کیف پول ربات استفاده کن.")
 
 
 async def _provision_order(app: App, order, user_id: int) -> tuple[dict, str]:
@@ -1087,7 +1277,7 @@ async def renew_choose_plan(callback: CallbackQuery) -> None:
             "renew",
             email,
             demo_mode=app.config.demo_mode,
-            card_payment=app.config.card_payment_enabled,
+            card_payment=True,
         ),
     )
 
@@ -1302,6 +1492,27 @@ async def admin_retry_order(message: Message) -> None:
         )
         return
     await message.answer("سرویس ساخته و برای کاربر ارسال شد ✅")
+
+
+@router.message(Command("refundwallet"))
+async def admin_refund_wallet(message: Message) -> None:
+    app = _app(message)
+    if not app.is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("فرمت صحیح: <code>/refundwallet 12</code>. ابتدا مطمئن شو سرویس در 3x-ui ساخته یا تمدید نشده است.")
+        return
+    refunded = await app.db.refund_failed_wallet_order(int(parts[1]))
+    if not refunded:
+        await message.answer("سفارش خطادار و پرداخت‌شده از کیف پول پیدا نشد یا قبلاً بازپرداخت شده است.")
+        return
+    user_id, amount = refunded
+    try:
+        await app.bot.send_message(user_id, f"✅ مبلغ <code>{amount:,} تومان</code> سفارش #{parts[1]} به کیف پولت برگشت.")
+    except TelegramAPIError:
+        logger.exception("Could not notify user about wallet refund for order %s", parts[1])
+    await message.answer(f"بازپرداخت سفارش #{parts[1]} به مبلغ {amount:,} تومان ثبت شد.")
 
 
 @router.message(Command("pendingreceipts"))
