@@ -54,8 +54,7 @@ from .keyboards import (
     wallet_topup_keyboard,
 )
 from .xui import XUIClient, XUIError, XUINameTakenError
-from .welcome import REFERRAL_BANNER, render_welcome, welcome_banner_path, welcome_photo_text
-from .management import CONFIG_DIR
+from .welcome import DEFAULT_REFERRAL_MESSAGE, REFERRAL_BANNER, WELCOME_BANNER, render_referral_message, render_welcome
 
 
 logger = logging.getLogger(__name__)
@@ -352,25 +351,14 @@ async def start(message: Message) -> None:
         referrer_id = int(start_parts[1][4:])
     await app.db.upsert_user(user.id, user.username, user.full_name, referrer_id)
     claimed_services = await app.db.claim_pending_services(user.id, user.username)
-    welcome_text = render_welcome(
+    welcome_text = html.escape(render_welcome(
         app.config.welcome_message, user.first_name or "دوست", app.config.channel_join_required
-    )
-    banner_caption, followup_text = welcome_photo_text(
-        render_welcome(getattr(app.config, "welcome_banner_title", ""), user.first_name or "دوست", app.config.channel_join_required),
-        render_welcome(getattr(app.config, "welcome_banner_details", ""), user.first_name or "دوست", app.config.channel_join_required),
-        welcome_text,
-    )
+    ))
     try:
-        await message.answer_photo(
-            photo=FSInputFile(welcome_banner_path(CONFIG_DIR)),
-            caption=html.escape(banner_caption),
-        )
+        await message.answer_photo(photo=FSInputFile(WELCOME_BANNER), caption=welcome_text)
     except (OSError, TelegramAPIError):
         logger.exception("Welcome banner delivery failed")
-        await message.answer(html.escape("\n\n".join(part for part in (banner_caption, followup_text) if part)))
-    else:
-        if followup_text:
-            await message.answer(html.escape(followup_text))
+        await message.answer(welcome_text)
     if not await app.gate(message):
         return
     await app.show_welcome(message)
@@ -709,15 +697,9 @@ async def _send_referral_banner(app: App, chat_id: int, user_id: int) -> None:
     if not bot_name:
         raise RuntimeError("Bot username is unavailable")
     link = f"https://t.me/{bot_name}?start=ref_{user_id}"
-    caption = (
-        "🌄 <b>دماوند VPN | دعوت دوستان</b>\n\n"
-        "سرویس‌های آی‌پی ثابت برای ترید، برنامه‌نویسی، ابزارهای هوش مصنوعی و وب‌گردی.\n"
-        "کیف پول، پلن‌های متنوع و پشتیبانی در دسترس شماست.\n\n"
-        f"🔗 <b>لینک اختصاصی دعوت شما:</b>\n<code>{html.escape(link)}</code>\n"
-        f"<a href=\"{html.escape(link, quote=True)}\">شروع ربات با لینک دعوت</a>\n\n"
-        "این پیام را برای دوستت بفرست. اگر با لینک تو ربات را شروع کند و اولین خرید پولی‌اش کامل شود، "
-        "۱۰٪ مبلغ همان خرید به کیف پولت اضافه می‌شود."
-    )
+    caption = html.escape(render_referral_message(
+        getattr(app.config, "referral_message", DEFAULT_REFERRAL_MESSAGE), link
+    ))
     try:
         await app.bot.send_photo(
             chat_id, photo=FSInputFile(REFERRAL_BANNER), caption=caption,

@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from .menu import MENU_SETTING_KEYS
-from .welcome import DEFAULT_BOT_DESCRIPTION, DEFAULT_WELCOME_MESSAGE
+from .welcome import DEFAULT_BOT_DESCRIPTION, DEFAULT_REFERRAL_MESSAGE, DEFAULT_WELCOME_MESSAGE
 
 CONFIG_DIR = Path(os.environ.get("DAMAVAND_CONFIG_DIR", "/etc/damavand-vpn-bot"))
 CONFIG_PATH = CONFIG_DIR / "config.json"
@@ -27,8 +27,7 @@ DEFAULTS = {
     "ADMIN_IDS": "",
     "BOT_DESCRIPTION": DEFAULT_BOT_DESCRIPTION,
     "WELCOME_MESSAGE": DEFAULT_WELCOME_MESSAGE,
-    "WELCOME_BANNER_TITLE": "",
-    "WELCOME_BANNER_DETAILS": "",
+    "REFERRAL_MESSAGE": DEFAULT_REFERRAL_MESSAGE,
     "CHANNEL_USERNAME": "",
     "CHANNEL_ID": "",
     "CHANNEL_JOIN_URL": "",
@@ -53,7 +52,7 @@ DEFAULTS = {
     **{key: "true" for key in MENU_SETTING_KEYS.values()},
 }
 SETTINGS = (
-    "BOT_TOKEN", "ADMIN_IDS", "BOT_DESCRIPTION", "WELCOME_MESSAGE", "WELCOME_BANNER_TITLE", "WELCOME_BANNER_DETAILS", "CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL", "SUPPORT_USERNAME",
+    "BOT_TOKEN", "ADMIN_IDS", "BOT_DESCRIPTION", "WELCOME_MESSAGE", "REFERRAL_MESSAGE", "CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL", "SUPPORT_USERNAME",
     "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE",
     "CARD_PAYMENT_ENABLED", "CARD_PAYMENT_CARD_NUMBER",
     "CARD_PAYMENT_HOLDER", "CARD_PAYMENT_INSTRUCTIONS",
@@ -95,7 +94,7 @@ def validate_settings(data: dict[str, str]) -> None:
 
     for key in SETTINGS:
         value = data.get(key, "")
-        multiline = key in {"BOT_DESCRIPTION", "WELCOME_MESSAGE", "WELCOME_BANNER_DETAILS", "CARD_PAYMENT_INSTRUCTIONS"}
+        multiline = key in {"BOT_DESCRIPTION", "WELCOME_MESSAGE", "REFERRAL_MESSAGE", "CARD_PAYMENT_INSTRUCTIONS"}
         if not isinstance(value, str) or len(value) > 4096 or "\x00" in value or (not multiline and ("\n" in value or "\r" in value)):
             raise ValueError(f"Invalid {key}")
     if not re.fullmatch(r"\d{6,12}:[A-Za-z0-9_-]{30,}", data["BOT_TOKEN"]):
@@ -106,8 +105,8 @@ def validate_settings(data: dict[str, str]) -> None:
         raise ValueError("Bot description must be 1–512 characters")
     if not 1 <= len(data["WELCOME_MESSAGE"].strip()) <= 900:
         raise ValueError("Welcome message must be 1–900 characters")
-    if len(data["WELCOME_BANNER_TITLE"].strip()) > 100 or len(data["WELCOME_BANNER_DETAILS"].strip()) > 240:
-        raise ValueError("Banner title must be at most 100 characters and details at most 240")
+    if not 1 <= len(data["REFERRAL_MESSAGE"].strip()) <= 900:
+        raise ValueError("Referral message must be 1–900 characters")
     if data["CHANNEL_USERNAME"] and not re.fullmatch(r"@[A-Za-z0-9_]{5,32}", data["CHANNEL_USERNAME"]):
         raise ValueError("CHANNEL_USERNAME must be a public @channel username")
     if data["CHANNEL_ID"] and not re.fullmatch(r"-100\d{5,20}", data["CHANNEL_ID"]):

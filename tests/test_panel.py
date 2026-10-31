@@ -1,5 +1,4 @@
 import json
-import io
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -7,9 +6,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
 from aiohttp import CookieJar
-from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
-from PIL import Image
 
 from damavand_bot import management, panel
 from damavand_bot.db import Database
@@ -27,8 +24,7 @@ class PanelTests(IsolatedAsyncioTestCase):
         self.auth_patch = patch.object(management, "AUTH_PATH", root / "panel-auth.json")
         self.panel_auth_patch = patch.object(panel, "AUTH_PATH", root / "panel-auth.json")
         self.panel_domain_patch = patch.object(panel, "PANEL_DOMAIN_PATH", root / "panel-domain")
-        self.panel_banner_dir_patch = patch.object(panel, "CONFIG_DIR", root)
-        for item in (self.config_patch, self.panel_config_patch, self.defaults_patch, self.auth_patch, self.panel_auth_patch, self.panel_domain_patch, self.panel_banner_dir_patch):
+        for item in (self.config_patch, self.panel_config_patch, self.defaults_patch, self.auth_patch, self.panel_auth_patch, self.panel_domain_patch):
             item.start()
             self.addCleanup(item.stop)
         data = dict(management.DEFAULTS)
@@ -214,7 +210,7 @@ class PanelTests(IsolatedAsyncioTestCase):
         self.assertEqual(303, response.status)
         self.assertEqual("Hello {name}\nChoose a plan", management.read_config()["WELCOME_MESSAGE"])
 
-    async def test_welcome_banner_upload_preview_text_and_reset(self):
+    async def test_referral_banner_message_is_prefilled_and_saved(self):
         data = management.read_config()
         data.update({
             "BOT_TOKEN": "123456789:" + "A" * 35, "ADMIN_IDS": "123456789",
@@ -223,8 +219,6 @@ class PanelTests(IsolatedAsyncioTestCase):
             "XUI_SUBSCRIPTION_BASE": "https://example.com/sub",
         })
         management.write_config(data)
-        response = await self.client.get("/welcome-banner/image", headers=self.headers, allow_redirects=False)
-        self.assertEqual(303, response.status)
         headers, login_csrf = await self.login_form(self.headers)
         response = await self.client.post("/login", headers=headers, data={
             "password": "a-very-long-panel-password", "login_csrf": login_csrf,
@@ -232,55 +226,20 @@ class PanelTests(IsolatedAsyncioTestCase):
         csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
         response = await self.client.get("/settings", headers=self.headers)
         body = await response.text()
-        self.assertIn('name="WELCOME_BANNER_IMAGE"', body)
-        self.assertIn('name="WELCOME_BANNER_TITLE"', body)
-        preview = await self.client.get("/welcome-banner/image", headers=self.headers)
-        self.assertEqual(200, preview.status)
-        self.assertEqual("no-store", preview.headers["Cache-Control"])
-        picture = io.BytesIO()
-        Image.new("RGB", (640, 360), "blue").save(picture, format="PNG")
-        upload = FormData()
-        upload.add_field("csrf", csrf)
-        upload.add_field("WELCOME_BANNER_TITLE", "Hello {name}")
-        upload.add_field("WELCOME_BANNER_DETAILS", "Fast and stable VPN")
-        upload.add_field("WELCOME_BANNER_IMAGE", picture.getvalue(), filename="banner.png", content_type="image/png")
-        with patch.object(panel, "restart_bot", new_callable=AsyncMock):
-            response = await self.client.post("/settings", headers=self.headers, data=upload, allow_redirects=False)
-        self.assertEqual(303, response.status)
-        self.assertEqual("Hello {name}", management.read_config()["WELCOME_BANNER_TITLE"])
-        self.assertEqual("Fast and stable VPN", management.read_config()["WELCOME_BANNER_DETAILS"])
-        custom = panel.CONFIG_DIR / "welcome-banner-custom.jpg"
-        self.assertTrue(custom.is_file())
-        preview = await self.client.get("/welcome-banner/image", headers=self.headers)
-        self.assertEqual("image/jpeg", preview.content_type)
-        self.assertEqual(200, preview.status)
+        self.assertIn('name="REFERRAL_MESSAGE"', body)
+        self.assertIn("سرویس‌های آی‌پی ثابت", body)
+        self.assertIn("{link}", body)
+        self.assertNotIn('name="WELCOME_BANNER_IMAGE"', body)
+        self.assertNotIn('name="WELCOME_BANNER_TITLE"', body)
+        self.assertNotIn('name="WELCOME_BANNER_DETAILS"', body)
         with patch.object(panel, "restart_bot", new_callable=AsyncMock):
             response = await self.client.post("/settings", headers=self.headers, data={
-                "csrf": csrf, "WELCOME_BANNER_RESET": "true",
+                "csrf": csrf, "REFERRAL_MESSAGE": "Invite a friend: {link}",
             }, allow_redirects=False)
         self.assertEqual(303, response.status)
-        self.assertFalse(custom.exists())
-
-    async def test_invalid_welcome_banner_is_rejected(self):
-        data = management.read_config()
-        data.update({
-            "BOT_TOKEN": "123456789:" + "A" * 35, "ADMIN_IDS": "123456789",
-            "CHANNEL_USERNAME": "@publicchannel", "SUPPORT_USERNAME": "@supportuser",
-            "XUI_BASE_URL": "https://example.com", "XUI_API_TOKEN": "secret",
-            "XUI_SUBSCRIPTION_BASE": "https://example.com/sub",
-        })
-        management.write_config(data)
-        headers, login_csrf = await self.login_form(self.headers)
-        response = await self.client.post("/login", headers=headers, data={
-            "password": "a-very-long-panel-password", "login_csrf": login_csrf,
-        }, allow_redirects=False)
-        csrf = panel.SESSIONS[response.cookies[panel.COOKIE].value][1]
-        upload = FormData()
-        upload.add_field("csrf", csrf)
-        upload.add_field("WELCOME_BANNER_IMAGE", b"not an image", filename="banner.png", content_type="image/png")
-        response = await self.client.post("/settings", headers=self.headers, data=upload, allow_redirects=False)
-        self.assertEqual(400, response.status)
-        self.assertFalse((panel.CONFIG_DIR / "welcome-banner-custom.jpg").exists())
+        self.assertEqual("Invite a friend: {link}", management.read_config()["REFERRAL_MESSAGE"])
+        response = await self.client.get("/settings", headers=self.headers)
+        self.assertIn("Invite a friend: {link}", await response.text())
 
     async def test_bot_buttons_page_requires_login_and_saves_all_six(self):
         response = await self.client.get("/buttons", headers=self.headers, allow_redirects=False)

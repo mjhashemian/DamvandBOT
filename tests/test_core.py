@@ -10,7 +10,7 @@ from damavand_bot.config import Config
 from damavand_bot.db import Database
 from damavand_bot.keyboards import CHANNEL, REFERRAL, main_menu
 from damavand_bot.menu import DEFAULT_ENABLED_BUTTONS, MENU_BUTTONS
-from damavand_bot.welcome import DEFAULT_WELCOME_MESSAGE, render_welcome, welcome_photo_text
+from damavand_bot.welcome import DEFAULT_REFERRAL_MESSAGE, DEFAULT_WELCOME_MESSAGE, render_referral_message, render_welcome
 from damavand_bot.xui import XUIClient, XUIError, XUINameTakenError
 
 
@@ -117,9 +117,11 @@ class MenuButtonTests(IsolatedAsyncioTestCase):
             get_me=AsyncMock(return_value=SimpleNamespace(username="examplebot")),
             send_photo=AsyncMock(), send_message=AsyncMock(),
         )
-        await _send_referral_banner(SimpleNamespace(bot=bot), 123, 456)
+        await _send_referral_banner(SimpleNamespace(
+            bot=bot, config=SimpleNamespace(referral_message="Invite your friend: {link}")
+        ), 123, 456)
         kwargs = bot.send_photo.await_args.kwargs
-        self.assertIn("https://t.me/examplebot?start=ref_456", kwargs["caption"])
+        self.assertEqual("Invite your friend: https://t.me/examplebot?start=ref_456", kwargs["caption"])
         self.assertEqual("https://t.me/examplebot?start=ref_456",
                          kwargs["reply_markup"].inline_keyboard[0][0].url)
         self.assertTrue(kwargs["photo"].path.exists())
@@ -147,15 +149,10 @@ class WelcomeTests(IsolatedAsyncioTestCase):
         self.assertNotIn("عضویت در کانال", disabled)
         self.assertIn("آی‌پی ثابت", disabled)
 
-    async def test_banner_text_stays_with_photo_until_caption_limit(self):
-        caption, followup = welcome_photo_text("Damavand", "Fast VPN", "Welcome")
-        self.assertEqual("Damavand\n\nFast VPN\n\nWelcome", caption)
-        self.assertIsNone(followup)
-        caption, followup = welcome_photo_text("Damavand", "Fast VPN", "x" * 900)
-        self.assertEqual("Damavand\n\nFast VPN\n\n" + "x" * 900, caption)
-        caption, followup = welcome_photo_text("Damavand", "x" * 240, "x" * 900)
-        self.assertEqual("Damavand\n\n" + "x" * 240, caption)
-        self.assertEqual("x" * 900, followup)
+    async def test_referral_message_inserts_personal_link(self):
+        link = "https://t.me/examplebot?start=ref_123"
+        self.assertIn(link, render_referral_message(DEFAULT_REFERRAL_MESSAGE, link))
+        self.assertEqual("Invite a friend:\n\n" + link, render_referral_message("Invite a friend:", link))
 
 
 class DatabaseTests(IsolatedAsyncioTestCase):

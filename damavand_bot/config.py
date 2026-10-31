@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .menu import MENU_SETTING_KEYS
-from .welcome import DEFAULT_BOT_DESCRIPTION, DEFAULT_WELCOME_MESSAGE
+from .welcome import DEFAULT_BOT_DESCRIPTION, DEFAULT_REFERRAL_MESSAGE, DEFAULT_WELCOME_MESSAGE
 
 
 def _required(name: str) -> str:
@@ -28,8 +28,7 @@ class Config:
     admin_ids: frozenset[int]
     bot_description: str
     welcome_message: str
-    welcome_banner_title: str
-    welcome_banner_details: str
+    referral_message: str
     channel_username: str
     channel_id: str
     channel_join_url: str
@@ -77,8 +76,7 @@ class Config:
             admin_ids=admin_ids,
             bot_description=os.getenv("BOT_DESCRIPTION", DEFAULT_BOT_DESCRIPTION).strip(),
             welcome_message=os.getenv("WELCOME_MESSAGE", DEFAULT_WELCOME_MESSAGE).strip(),
-            welcome_banner_title=os.getenv("WELCOME_BANNER_TITLE", "").strip(),
-            welcome_banner_details=os.getenv("WELCOME_BANNER_DETAILS", "").strip(),
+            referral_message=os.getenv("REFERRAL_MESSAGE", DEFAULT_REFERRAL_MESSAGE).strip(),
             channel_username=os.getenv("CHANNEL_USERNAME", "").strip(),
             channel_id=os.getenv("CHANNEL_ID", "").strip(),
             channel_join_url=os.getenv("CHANNEL_JOIN_URL", "").strip(),

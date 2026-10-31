@@ -5,7 +5,16 @@ from pathlib import Path
 
 WELCOME_BANNER = Path(__file__).parent / "assets" / "welcome-banner.png"
 REFERRAL_BANNER = Path(__file__).parent / "assets" / "referral-banner.png"
-CUSTOM_WELCOME_BANNER_NAME = "welcome-banner-custom.jpg"
+
+DEFAULT_REFERRAL_MESSAGE = (
+    "🌄 دماوند VPN | دعوت دوستان\n\n"
+    "سرویس‌های آی‌پی ثابت برای ترید، برنامه‌نویسی، ابزارهای هوش مصنوعی و وب‌گردی.\n"
+    "کیف پول، پلن‌های متنوع و پشتیبانی در دسترس شماست.\n\n"
+    "🔗 لینک اختصاصی دعوت شما:\n{link}\n"
+    "شروع ربات با لینک دعوت\n\n"
+    "این پیام را برای دوستت بفرست. اگر با لینک تو ربات را شروع کند و اولین خرید پولی‌اش کامل شود، "
+    "۱۰٪ مبلغ همان خرید به کیف پولت اضافه می‌شود."
+)
 
 DEFAULT_BOT_DESCRIPTION = (
     "به دماوند VPN خوش اومدی 🌄\n"
@@ -26,14 +35,5 @@ def render_welcome(message: str, name: str, channel_required: bool) -> str:
     return message.replace("{name}", name).replace("{requirements}", requirements)
 
 
-def welcome_banner_path(config_dir: Path) -> Path:
-    custom = config_dir / CUSTOM_WELCOME_BANNER_NAME
-    return custom if custom.is_file() else WELCOME_BANNER
-
-
-def welcome_photo_text(title: str, details: str, welcome_message: str) -> tuple[str, str | None]:
-    prefix = "\n\n".join(part.strip() for part in (title, details) if part.strip())
-    combined = "\n\n".join(part for part in (prefix, welcome_message) if part)
-    if len(combined) <= 1000:
-        return combined, None
-    return prefix, welcome_message
+def render_referral_message(message: str, link: str) -> str:
+    return message.replace("{link}", link) if "{link}" in message else f"{message.rstrip()}\n\n{link}"
