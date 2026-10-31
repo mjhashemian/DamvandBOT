@@ -54,7 +54,8 @@ from .keyboards import (
     wallet_topup_keyboard,
 )
 from .xui import XUIClient, XUIError, XUINameTakenError
-from .welcome import REFERRAL_BANNER, WELCOME_BANNER, render_welcome
+from .welcome import REFERRAL_BANNER, render_welcome, welcome_banner_path, welcome_photo_text
+from .management import CONFIG_DIR
 
 
 logger = logging.getLogger(__name__)
@@ -351,14 +352,25 @@ async def start(message: Message) -> None:
         referrer_id = int(start_parts[1][4:])
     await app.db.upsert_user(user.id, user.username, user.full_name, referrer_id)
     claimed_services = await app.db.claim_pending_services(user.id, user.username)
-    welcome_text = html.escape(render_welcome(
+    welcome_text = render_welcome(
         app.config.welcome_message, user.first_name or "دوست", app.config.channel_join_required
-    ))
+    )
+    banner_caption, followup_text = welcome_photo_text(
+        render_welcome(getattr(app.config, "welcome_banner_title", ""), user.first_name or "دوست", app.config.channel_join_required),
+        render_welcome(getattr(app.config, "welcome_banner_details", ""), user.first_name or "دوست", app.config.channel_join_required),
+        welcome_text,
+    )
     try:
-        await message.answer_photo(photo=FSInputFile(WELCOME_BANNER), caption=welcome_text)
+        await message.answer_photo(
+            photo=FSInputFile(welcome_banner_path(CONFIG_DIR)),
+            caption=html.escape(banner_caption),
+        )
     except (OSError, TelegramAPIError):
         logger.exception("Welcome banner delivery failed")
-        await message.answer(welcome_text)
+        await message.answer(html.escape("\n\n".join(part for part in (banner_caption, followup_text) if part)))
+    else:
+        if followup_text:
+            await message.answer(html.escape(followup_text))
     if not await app.gate(message):
         return
     await app.show_welcome(message)

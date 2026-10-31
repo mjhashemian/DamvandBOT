@@ -62,10 +62,15 @@ is required by default; turn it off in Channel settings to let users proceed
 without joining or configuring a channel. Saved Bot and 3x-ui
 tokens stay masked until you click Show. The reveal request requires the active
 panel session and CSRF token; leave token fields blank to retain saved values.
-The Welcome settings section edits the text shown before START and the caption
-sent with the logo-based banner after `/start`. The welcome caption supports
-`{name}` and `{requirements}` placeholders. Telegram's pre-START description is
-text-only; the image is delivered as the first bot message.
+The Welcome settings section edits the text shown before START, the welcome
+message, and the banner title and details shown with the image after `/start`.
+It also previews the current image and accepts a replacement PNG or JPEG of up
+to 5 MB, with an option to restore the default banner. The image is stored in
+the private server configuration directory; it is never committed to Git.
+The welcome text and banner fields support `{name}` and `{requirements}` placeholders.
+If their combined text exceeds Telegram's photo caption limit, the bot sends
+the welcome message separately. Telegram's pre-START description is text-only;
+the image is delivered as the first bot message.
 Assign an existing service by a user's numeric Telegram ID, even before they
 start the bot. You can also enter an `@username` that has not started the bot:
 the assignment waits in the panel and attaches automatically to the first

@@ -26,6 +26,8 @@ const translations: Record<string, string> = {
   'Sign in':'ورود','Panel password':'رمز پنل','Invalid password.':'رمز نادرست است.','Try again':'دوباره تلاش کنید',
   'Bot settings':'تنظیمات ربات','Payment settings':'تنظیمات پرداخت','Channel settings':'تنظیمات کانال','Trial settings':'تنظیمات سرویس آزمایشی',
   'Welcome settings':'تنظیمات خوش‌آمدگویی','Before-START description':'توضیحات پیش از شروع','Welcome message':'پیام خوش‌آمدگویی',
+  'Banner title':'عنوان بنر','Banner details':'توضیحات بنر','Welcome banner image':'تصویر بنر خوش‌آمدگویی','Replace banner image':'جایگزینی تصویر بنر','Use default banner image':'استفاده از تصویر پیش‌فرض بنر',
+  'The image and optional title/details are sent after /start. Upload a PNG or JPEG up to 5 MB; the welcome message remains editable above.':'تصویر و عنوان/توضیحات اختیاری پس از /start ارسال می‌شوند. فایل PNG یا JPEG تا ۵ مگابایت بارگذاری کنید؛ پیام خوش‌آمدگویی بالاتر قابل ویرایش است.',
   'The description appears before START. The banner and welcome message are sent after /start. Use {name} and {requirements} as optional placeholders in the welcome message.':'توضیحات پیش از START نمایش داده می‌شود. بنر و پیام خوش‌آمدگویی بعد از /start ارسال می‌شوند. در پیام می‌توانید از {name} و {requirements} استفاده کنید.',
   'Bot Token':'توکن ربات','Admin Telegram IDs':'شناسه‌های تلگرام مدیران','Support username':'نام کاربری پشتیبانی','3x-ui panel URL':'نشانی پنل 3x-ui','3x-ui API token':'توکن API پنل 3x-ui','Subscription base URL':'نشانی پایه اشتراک',
   'Channel username':'نام کاربری کانال','Channel ID':'شناسه کانال','Channel join link':'لینک عضویت کانال','Require channel membership':'الزام عضویت در کانال',

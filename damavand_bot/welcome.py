@@ -5,6 +5,7 @@ from pathlib import Path
 
 WELCOME_BANNER = Path(__file__).parent / "assets" / "welcome-banner.png"
 REFERRAL_BANNER = Path(__file__).parent / "assets" / "referral-banner.png"
+CUSTOM_WELCOME_BANNER_NAME = "welcome-banner-custom.jpg"
 
 DEFAULT_BOT_DESCRIPTION = (
     "به دماوند VPN خوش اومدی 🌄\n"
@@ -23,3 +24,16 @@ DEFAULT_WELCOME_MESSAGE = (
 def render_welcome(message: str, name: str, channel_required: bool) -> str:
     requirements = "عضویت در کانال و قوانین رو تأیید کن" if channel_required else "قوانین رو تأیید کن"
     return message.replace("{name}", name).replace("{requirements}", requirements)
+
+
+def welcome_banner_path(config_dir: Path) -> Path:
+    custom = config_dir / CUSTOM_WELCOME_BANNER_NAME
+    return custom if custom.is_file() else WELCOME_BANNER
+
+
+def welcome_photo_text(title: str, details: str, welcome_message: str) -> tuple[str, str | None]:
+    prefix = "\n\n".join(part.strip() for part in (title, details) if part.strip())
+    combined = "\n\n".join(part for part in (prefix, welcome_message) if part)
+    if len(combined) <= 1000:
+        return combined, None
+    return prefix, welcome_message

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import io
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ import re
 import secrets
 import signal
 import sqlite3
+import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -18,6 +20,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from aiohttp import web
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .management import (
     AUTH_PATH, CONFIG_DIR, CONFIG_PATH, PANEL_DOMAIN_PATH,
@@ -25,6 +28,7 @@ from .management import (
     read_config, validate_settings, verify_panel_password, write_config,
 )
 from .menu import MENU_BUTTONS, MENU_SETTING_KEYS
+from .welcome import CUSTOM_WELCOME_BANNER_NAME, welcome_banner_path
 
 SESSIONS: dict[str, tuple[float, str]] = {}
 LOGIN_CHALLENGES: dict[str, tuple[float, str]] = {}
@@ -34,7 +38,7 @@ LOGIN_COOKIE = "damavand_login"
 NULL_ORIGIN_CSRF_PATHS = frozenset({"/login", "/logout", "/plans", "/discounts", "/services", "/settings", "/settings/reveal", "/buttons", "/terms", "/wallets"})
 SETTING_GROUPS = (
     ("Bot settings", ("BOT_TOKEN", "ADMIN_IDS", "SUPPORT_USERNAME", "XUI_BASE_URL", "XUI_API_TOKEN", "XUI_SUBSCRIPTION_BASE")),
-    ("Welcome settings", ("BOT_DESCRIPTION", "WELCOME_MESSAGE")),
+    ("Welcome settings", ("BOT_DESCRIPTION", "WELCOME_MESSAGE", "WELCOME_BANNER_TITLE", "WELCOME_BANNER_DETAILS")),
     ("Channel settings", ("CHANNEL_JOIN_REQUIRED", "CHANNEL_USERNAME", "CHANNEL_ID", "CHANNEL_JOIN_URL")),
     ("Payment settings", ("CARD_PAYMENT_ENABLED", "CARD_PAYMENT_CARD_NUMBER", "CARD_PAYMENT_HOLDER", "CARD_PAYMENT_INSTRUCTIONS")),
     ("Trial settings", ("TRIAL_ENABLED", "TRIAL_MB", "TRIAL_DAYS")),
@@ -42,6 +46,7 @@ SETTING_GROUPS = (
 SETTING_LABELS = {
     "BOT_TOKEN": "Bot Token", "ADMIN_IDS": "Admin Telegram IDs", "SUPPORT_USERNAME": "Support username",
     "BOT_DESCRIPTION": "Before-START description", "WELCOME_MESSAGE": "Welcome message",
+    "WELCOME_BANNER_TITLE": "Banner title", "WELCOME_BANNER_DETAILS": "Banner details",
     "XUI_BASE_URL": "3x-ui panel URL", "XUI_API_TOKEN": "3x-ui API token",
     "XUI_SUBSCRIPTION_BASE": "Subscription base URL", "CHANNEL_USERNAME": "Channel username",
     "CHANNEL_ID": "Channel ID", "CHANNEL_JOIN_URL": "Channel join link", "CHANNEL_JOIN_REQUIRED": "Require channel membership",
@@ -85,7 +90,7 @@ def page(title: str, content: str, csrf: str = "", message: str = "") -> web.Res
     return web.Response(text=body, content_type="text/html", headers={
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-        "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     })
 
 
@@ -531,8 +536,8 @@ async def settings(request: web.Request):
         for key in keys:
             if key in {"CARD_PAYMENT_ENABLED", "TRIAL_ENABLED", "CHANNEL_JOIN_REQUIRED"}:
                 field = f'<select name="{key}"><option value="true" {"selected" if data.get(key)=="true" else ""}>Enabled</option><option value="false" {"selected" if data.get(key)!="true" else ""}>Disabled</option></select>'
-            elif key in {"CARD_PAYMENT_INSTRUCTIONS", "BOT_DESCRIPTION", "WELCOME_MESSAGE"}:
-                maxlength = 512 if key == "BOT_DESCRIPTION" else 900 if key == "WELCOME_MESSAGE" else 4096
+            elif key in {"CARD_PAYMENT_INSTRUCTIONS", "BOT_DESCRIPTION", "WELCOME_MESSAGE", "WELCOME_BANNER_DETAILS"}:
+                maxlength = {"BOT_DESCRIPTION": 512, "WELCOME_MESSAGE": 900, "WELCOME_BANNER_DETAILS": 240}.get(key, 4096)
                 field = f'<textarea name="{key}" maxlength="{maxlength}">{esc(data.get(key,""))}</textarea>'
             elif key in SECRET_SETTINGS:
                 placeholder = "Saved — leave blank to keep current" if data.get(key) else ""
@@ -542,13 +547,55 @@ async def settings(request: web.Request):
                     f'<button type="button" class="reveal-secret" data-secret-key="{key}">Show</button></div>'
                 )
             else:
-                field = f'<input name="{key}" type="text" value="{esc(data.get(key, ""))}" maxlength="4096" autocomplete="off">'
+                maxlength = 100 if key == "WELCOME_BANNER_TITLE" else 4096
+                field = f'<input name="{key}" type="text" value="{esc(data.get(key, ""))}" maxlength="{maxlength}" autocomplete="off">'
             fields.append(f'<label>{esc(SETTING_LABELS[key])}{field}</label>')
         hint = '<p class="muted">The description appears before START. The banner and welcome message are sent after /start. Use {name} and {requirements} as optional placeholders in the welcome message.</p>' if title == "Welcome settings" else ""
-        sections.append(f'<section class="card setting-group"><h2>{esc(title)}</h2>{hint}<div class="setting-grid">{"".join(fields)}</div></section>')
+        banner_controls = (
+            '<div class="banner-settings"><h3>Welcome banner image</h3>'
+            '<p class="muted">The image and optional title/details are sent after /start. Upload a PNG or JPEG up to 5 MB; the welcome message remains editable above.</p>'
+            '<img src="/welcome-banner/image" alt="Current welcome banner" style="display:block;max-width:100%;max-height:280px;object-fit:contain;border-radius:10px">'
+            '<label>Replace banner image<input type="file" name="WELCOME_BANNER_IMAGE" accept="image/png,image/jpeg"></label>'
+            '<label><input type="checkbox" name="WELCOME_BANNER_RESET" value="true"> Use default banner image</label></div>'
+            if title == "Welcome settings" else ""
+        )
+        sections.append(f'<section class="card setting-group"><h2>{esc(title)}</h2>{hint}<div class="setting-grid">{"".join(fields)}</div>{banner_controls}</section>')
     intro = "Enter the bot and 3x-ui details to finish setup. Channel membership is optional." if not CONFIG_PATH.exists() else "Saved values remain here after refresh. Secret tokens are hidden; leave them blank to keep the saved value."
-    body = f'<p class="muted">{esc(intro)}</p><form method="post" action="/settings"><input type="hidden" name="csrf" value="{esc(csrf)}">{"".join(sections)}<div class="save-bar"><button>Save all settings</button></div></form>'
+    body = f'<p class="muted">{esc(intro)}</p><form method="post" action="/settings" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{esc(csrf)}">{"".join(sections)}<div class="save-bar"><button>Save all settings</button></div></form>'
     return page("Settings", body, csrf, request.query.get("message", ""))
+
+
+async def welcome_banner_image(request: web.Request):
+    token(request)
+    response = web.FileResponse(welcome_banner_path(CONFIG_DIR))
+    response.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    return response
+
+
+def prepare_welcome_banner(upload: web.FileField) -> bytes:
+    raw = upload.file.read(5 * 1024 * 1024 + 1)
+    if not raw or len(raw) > 5 * 1024 * 1024:
+        raise web.HTTPBadRequest(text="Banner must be a PNG or JPEG under 5 MB")
+    try:
+        with Image.open(io.BytesIO(raw)) as source:
+            if source.format not in {"PNG", "JPEG"} or source.width * source.height > 16_000_000:
+                raise ValueError("Unsupported banner image")
+            source.verify()
+        with Image.open(io.BytesIO(raw)) as source:
+            image = ImageOps.exif_transpose(source)
+            image.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+            if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+                image = image.convert("RGBA")
+                background = Image.new("RGB", image.size, "white")
+                background.paste(image, mask=image.getchannel("A"))
+                image = background
+            else:
+                image = image.convert("RGB")
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=88, optimize=True)
+            return output.getvalue()
+    except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise web.HTTPBadRequest(text="Invalid PNG or JPEG banner image") from exc
 
 
 async def buttons(request: web.Request):
@@ -634,9 +681,37 @@ async def save_settings(request: web.Request):
         validate_settings(data)
     except ValueError as exc:
         raise web.HTTPBadRequest(text=str(exc))
+    upload = posted.get("WELCOME_BANNER_IMAGE")
+    reset_banner = posted.get("WELCOME_BANNER_RESET") == "true"
+    if upload is not None and not isinstance(upload, web.FileField) and str(upload):
+        raise web.HTTPBadRequest(text="Invalid banner upload")
+    has_upload = isinstance(upload, web.FileField) and bool(upload.filename)
+    if reset_banner and has_upload:
+        raise web.HTTPBadRequest(text="Choose either a new banner or the default banner")
+    image_bytes = prepare_welcome_banner(upload) if has_upload else None
+    banner_path = CONFIG_DIR / CUSTOM_WELCOME_BANNER_NAME
+    if image_bytes is not None:
+        CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix=".banner-", dir=CONFIG_DIR, delete=False) as stream:
+                temporary_path = Path(stream.name)
+                stream.write(image_bytes)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(temporary_path, 0o600)
+            os.replace(temporary_path, banner_path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+    elif reset_banner:
+        banner_path.unlink(missing_ok=True)
     write_config(data)
     with database() as db:
-        audit(db, "panel.settings_saved", {"keys": [key for key in SETTINGS if key not in SECRET_SETTINGS]})
+        audit(db, "panel.settings_saved", {
+            "keys": [key for key in SETTINGS if key not in SECRET_SETTINGS],
+            "banner_image": "uploaded" if image_bytes is not None else "reset" if reset_banner else "unchanged",
+        })
     asyncio.create_task(restart_bot())
     raise web.HTTPSeeOther("/settings?message=" + quote("Settings saved; bot restart requested"))
 
@@ -676,12 +751,13 @@ async def save_terms(request: web.Request):
 def make_app() -> web.Application:
     if not AUTH_PATH.exists():
         raise RuntimeError("Panel password not configured")
-    app = web.Application(middlewares=[guard], client_max_size=64 * 1024)
+    app = web.Application(middlewares=[guard], client_max_size=6 * 1024 * 1024)
     app.router.add_static("/static/", Path(__file__).parent / "static", show_index=False)
     app.router.add_get("/login", login)
     app.router.add_post("/login", login)
     app.router.add_post("/logout", logout)
     app.router.add_post("/settings/reveal", reveal_setting)
+    app.router.add_get("/welcome-banner/image", welcome_banner_image)
     for path, handler in (("/", overview), ("/users", users), ("/wallets", wallets), ("/services", manual_services), ("/orders", orders), ("/plans", plans), ("/discounts", discounts), ("/settings", settings), ("/buttons", buttons), ("/terms", terms), ("/audit", audit_log)):
         app.router.add_get(path, handler)
     for path, handler in (("/wallets", review_wallet), ("/plans", save_plan), ("/discounts", save_discount), ("/services", save_manual_service), ("/settings", save_settings), ("/buttons", save_buttons), ("/terms", save_terms)):

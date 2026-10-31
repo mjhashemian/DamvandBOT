@@ -10,7 +10,7 @@ from damavand_bot.config import Config
 from damavand_bot.db import Database
 from damavand_bot.keyboards import CHANNEL, REFERRAL, main_menu
 from damavand_bot.menu import DEFAULT_ENABLED_BUTTONS, MENU_BUTTONS
-from damavand_bot.welcome import DEFAULT_WELCOME_MESSAGE, render_welcome
+from damavand_bot.welcome import DEFAULT_WELCOME_MESSAGE, render_welcome, welcome_photo_text
 from damavand_bot.xui import XUIClient, XUIError, XUINameTakenError
 
 
@@ -146,6 +146,16 @@ class WelcomeTests(IsolatedAsyncioTestCase):
         self.assertIn("عضویت در کانال", enabled)
         self.assertNotIn("عضویت در کانال", disabled)
         self.assertIn("آی‌پی ثابت", disabled)
+
+    async def test_banner_text_stays_with_photo_until_caption_limit(self):
+        caption, followup = welcome_photo_text("Damavand", "Fast VPN", "Welcome")
+        self.assertEqual("Damavand\n\nFast VPN\n\nWelcome", caption)
+        self.assertIsNone(followup)
+        caption, followup = welcome_photo_text("Damavand", "Fast VPN", "x" * 900)
+        self.assertEqual("Damavand\n\nFast VPN\n\n" + "x" * 900, caption)
+        caption, followup = welcome_photo_text("Damavand", "x" * 240, "x" * 900)
+        self.assertEqual("Damavand\n\n" + "x" * 240, caption)
+        self.assertEqual("x" * 900, followup)
 
 
 class DatabaseTests(IsolatedAsyncioTestCase):
