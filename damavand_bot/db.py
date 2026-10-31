@@ -573,6 +573,17 @@ class Database:
                 await db.execute("SELECT * FROM orders WHERE id=?", (order_id,))
             ).fetchone()
 
+    async def rename_failed_buy_order(self, order_id: int, email: str) -> bool:
+        async with self.connect() as db:
+            cur = await db.execute(
+                """UPDATE orders SET target_email=?,error=NULL,updated_at=?
+                   WHERE id=? AND kind='buy' AND status IN ('paid_error','provision_error')
+                     AND provisioned_email IS NULL""",
+                (email, now_iso(), order_id),
+            )
+            await db.commit()
+            return cur.rowcount == 1
+
     async def claim_retry_order(self, order_id: int):
         async with self.connect() as db:
             await db.execute("BEGIN IMMEDIATE")

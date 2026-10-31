@@ -5,12 +5,13 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from damavand_bot.app import App, _finish_discount, _provision_order, _send_credentials, buy, start
+from damavand_bot.app import App, _client_name_available, _finish_discount, _provision_order, _send_credentials, buy, pre_checkout, start
 from damavand_bot.config import Config
 from damavand_bot.db import Database
 from damavand_bot.keyboards import CHANNEL, main_menu
 from damavand_bot.menu import DEFAULT_ENABLED_BUTTONS, MENU_BUTTONS
 from damavand_bot.welcome import DEFAULT_WELCOME_MESSAGE, render_welcome
+from damavand_bot.xui import XUIClient, XUIError, XUINameTakenError
 
 
 class ChannelRequirementTests(IsolatedAsyncioTestCase):
@@ -28,6 +29,67 @@ class ChannelRequirementTests(IsolatedAsyncioTestCase):
         app = App(config, bot, None, None)
         self.assertFalse(await app.is_channel_member(123))
         bot.get_chat_member.assert_awaited_once_with("@publicchannel", 123)
+
+
+class XUINameAvailabilityTests(IsolatedAsyncioTestCase):
+    async def test_legacy_inbound_client_is_taken_even_when_lookup_misses_it(self):
+        xui = XUIClient(SimpleNamespace())
+        xui.get_client = AsyncMock(side_effect=XUIError("Obtain (record not found)"))
+        xui._request = AsyncMock(return_value=[
+            {"settings": '{"clients": [{"email": "Test"}]}', "enable": False},
+        ])
+        self.assertFalse(await _client_name_available(SimpleNamespace(xui=xui), "test"))
+
+    async def test_modern_inbound_client_is_taken(self):
+        xui = XUIClient(SimpleNamespace())
+        xui.get_client = AsyncMock(side_effect=XUIError("Client not found"))
+        xui._request = AsyncMock(return_value=[{"settings": {"clients": [{"email": "taken"}]}}])
+        self.assertTrue(await xui.client_email_taken("taken"))
+
+    async def test_missing_client_is_available(self):
+        xui = XUIClient(SimpleNamespace())
+        xui.get_client = AsyncMock(side_effect=XUIError("Client not found"))
+        xui._request = AsyncMock(return_value=[{"settings": {"clients": []}}])
+        self.assertTrue(await _client_name_available(SimpleNamespace(xui=xui), "unused"))
+
+    async def test_incomplete_inbound_data_does_not_approve_name(self):
+        xui = XUIClient(SimpleNamespace())
+        xui.get_client = AsyncMock(side_effect=XUIError("Client not found"))
+        xui._request = AsyncMock(return_value=[{"settings": "bad json"}])
+        with self.assertRaises(XUIError):
+            await xui.client_email_taken("unused")
+
+    async def test_duplicate_create_error_is_identified(self):
+        xui = XUIClient(SimpleNamespace())
+        xui.enabled_inbound_ids = AsyncMock(return_value=[1])
+        xui._request = AsyncMock(side_effect=XUIError("Duplicate email: Test"))
+        with self.assertRaises(XUINameTakenError):
+            await xui.create_client(email="Test", telegram_id=123, traffic_bytes=1, duration_days=1, comment="test")
+
+    async def test_paid_provision_does_not_create_over_legacy_client(self):
+        xui = SimpleNamespace(
+            get_client=AsyncMock(side_effect=XUIError("Obtain (record not found)")),
+            client_email_taken=AsyncMock(return_value=True),
+            create_client=AsyncMock(),
+        )
+        db = SimpleNamespace(get_plan=AsyncMock(return_value=SimpleNamespace(traffic_gb=10, duration_days=30)))
+        order = {"id": 7, "telegram_id": 123, "kind": "buy", "plan_code": "gb10",
+                 "target_email": "Test", "traffic_gb": 10, "duration_days": 30, "discount_percent": 0}
+        with self.assertRaises(XUINameTakenError):
+            await _provision_order(SimpleNamespace(db=db, xui=xui, config=SimpleNamespace(demo_mode=False)), order, 123)
+        xui.create_client.assert_not_awaited()
+
+    async def test_stars_checkout_rejects_name_taken_after_invoice(self):
+        order = {"kind": "buy", "target_email": "Test", "stars_amount": 100}
+        app = SimpleNamespace(
+            db=SimpleNamespace(get_order_for_checkout=AsyncMock(return_value=order)),
+            xui=SimpleNamespace(client_email_taken=AsyncMock(return_value=True)),
+        )
+        query = SimpleNamespace(invoice_payload="p", from_user=SimpleNamespace(id=123),
+                                currency="XTR", total_amount=100, answer=AsyncMock())
+        with patch("damavand_bot.app.runtime_app", app):
+            await pre_checkout(query)
+        self.assertFalse(query.answer.await_args.kwargs["ok"])
 
 
 class MenuButtonTests(IsolatedAsyncioTestCase):
@@ -165,6 +227,16 @@ class DatabaseTests(IsolatedAsyncioTestCase):
         self.assertIsNotNone(await self.db.claim_retry_order(buy_id))
         self.assertIsNone(await self.db.claim_retry_order(buy_id))
         self.assertIsNone(await self.db.claim_retry_order(renew_id))
+
+    async def test_failed_paid_order_can_be_renamed_before_retry_only(self):
+        plan = await self.db.get_plan("gb10")
+        order_id, _ = await self.db.create_order(123, "buy", plan, "taken")
+        self.assertFalse(await self.db.rename_failed_buy_order(order_id, "free"))
+        await self.db.mark_order_result(order_id, "paid_error")
+        self.assertTrue(await self.db.rename_failed_buy_order(order_id, "free"))
+        self.assertEqual("free", (await self.db.get_order(order_id))["target_email"])
+        await self.db.mark_order_result(order_id, "complete", email="free")
+        self.assertFalse(await self.db.rename_failed_buy_order(order_id, "another"))
 
     async def test_discount_is_frozen_once_and_bound_to_order_owner(self):
         plan = await self.db.get_plan("gb10")

@@ -48,7 +48,7 @@ from .keyboards import (
     services_keyboard,
     terms_keyboard,
 )
-from .xui import XUIClient, XUIError
+from .xui import XUIClient, XUIError, XUINameTakenError
 from .welcome import WELCOME_BANNER, render_welcome
 
 
@@ -200,13 +200,7 @@ def _valid_client_name(value: str) -> bool:
 
 
 async def _client_name_available(app: App, name: str) -> bool:
-    try:
-        await app.xui.get_client(name)
-        return False
-    except XUIError as exc:
-        if "not found" in str(exc).lower():
-            return True
-        raise
+    return not await app.xui.client_email_taken(name)
 
 
 async def _begin_checkout(
@@ -221,6 +215,8 @@ async def _begin_checkout(
     target_email = order["target_email"]
     order_id = order["id"]
     plan_title = plan.title_fa if plan else order["plan_code"]
+    if action == "buy" and target_email and not await _client_name_available(app, target_email):
+        raise XUINameTakenError("این نام سرویس قبلاً استفاده شده است")
     if app.config.demo_mode:
         verb = "تمدید" if action == "renew" else "ساخت"
         name_line = (
@@ -304,7 +300,13 @@ async def _finish_discount(app: App, order_id: int, user_id: int, code: str | No
     else:
         await app.bot.send_message(user_id, f"مبلغ نهایی: <code>{order['toman_amount']:,} تومان</code>.")
     if order["discount_percent"] != 100:
-        await _begin_checkout(app, order=order, plan=plan)
+        try:
+            await _begin_checkout(app, order=order, plan=plan)
+        except XUINameTakenError:
+            await app.bot.send_message(user_id, "این نام سرویس در این فاصله استفاده شده؛ لطفاً از منوی خرید یک نام دیگه انتخاب کن.")
+        except XUIError:
+            logger.exception("Could not recheck client name for order %s", order_id)
+            await app.bot.send_message(user_id, "بررسی نام سرویس موقتاً ممکن نیست؛ لطفاً کمی بعد دوباره از منوی خرید شروع کن.")
         return True
     try:
         envelope, email = await _provision_order(app, order, user_id)
@@ -691,7 +693,14 @@ async def approve_card_payment(callback: CallbackQuery) -> None:
     except Exception as exc:
         logger.exception("Card payment provisioning failed for order %s", order_id)
         await app.db.mark_order_result(order_id, "paid_error", error=str(exc)[:1000])
-        await callback.message.answer("ساخت سرویس خطا داشت؛ با <code>/retryorder %s</code> دوباره تلاش کن." % order_id)
+        if isinstance(exc, XUINameTakenError):
+            await callback.message.answer(
+                f"نام سرویس این سفارش قبلاً استفاده شده است. نام دیگری را با "
+                f"<code>/renameorder {order_id} new_name</code> ثبت کن، سپس "
+                f"<code>/retryorder {order_id}</code> را بزن. پرداخت دوباره لازم نیست."
+            )
+        else:
+            await callback.message.answer("ساخت سرویس خطا داشت؛ با <code>/retryorder %s</code> دوباره تلاش کن." % order_id)
         return
     await app.db.mark_order_result(order_id, "complete", email=email)
     try:
@@ -740,9 +749,19 @@ async def pre_checkout(query: PreCheckoutQuery) -> None:
         and query.currency == "XTR"
         and query.total_amount == order["stars_amount"]
     )
+    error_message = "سفارش معتبر نیست یا قیمت آن تغییر کرده است."
+    if valid and order["kind"] == "buy" and order["target_email"]:
+        try:
+            if not await _client_name_available(app, order["target_email"]):
+                valid = False
+                error_message = "این نام سرویس قبلاً استفاده شده؛ لطفاً نام دیگری انتخاب کن."
+        except XUIError:
+            logger.exception("Could not check client name before Stars payment")
+            valid = False
+            error_message = "بررسی نام سرویس موقتاً ممکن نیست؛ کمی بعد دوباره تلاش کن."
     await query.answer(
         ok=valid,
-        error_message=None if valid else "سفارش معتبر نیست یا قیمت آن تغییر کرده است.",
+        error_message=None if valid else error_message,
     )
 
 
@@ -773,12 +792,11 @@ async def _provision_order(app: App, order, user_id: int) -> tuple[dict, str]:
         )
         try:
             envelope = await app.xui.get_client(email)
-            existing = _client_from_envelope(envelope)
-            if existing.get("comment") != expected_comment or str(existing.get("tgId")) != str(user_id):
-                raise XUIError("این نام سرویس قبلاً استفاده شده است")
-        except XUIError:
-            if not await _client_name_available(app, email):
+        except XUIError as exc:
+            if "not found" not in str(exc).lower():
                 raise
+            if not await _client_name_available(app, email):
+                raise XUINameTakenError("این نام سرویس قبلاً استفاده شده است") from exc
             envelope = await app.xui.create_client(
                 email=email,
                 telegram_id=user_id,
@@ -786,6 +804,10 @@ async def _provision_order(app: App, order, user_id: int) -> tuple[dict, str]:
                 duration_days=duration_days,
                 comment=expected_comment,
             )
+        else:
+            existing = _client_from_envelope(envelope)
+            if existing.get("comment") != expected_comment or str(existing.get("tgId")) != str(user_id):
+                raise XUINameTakenError("این نام سرویس قبلاً استفاده شده است")
     else:
         raise RuntimeError("Invalid order kind")
     await app.db.record_service(user_id, email, f"order:{order['id']}")
@@ -1215,6 +1237,31 @@ async def admin_set_stars(message: Message) -> None:
         return
     ok = await app.db.set_stars_price(int(parts[1]), int(parts[2]))
     await message.answer("قیمت Stars ذخیره شد ✅" if ok else "پلن پیدا نشد.")
+
+
+@router.message(Command("renameorder"))
+async def admin_rename_order(message: Message) -> None:
+    app = _app(message)
+    if not app.is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 3 or not parts[1].isdigit() or not _valid_client_name(parts[2]):
+        await message.answer("فرمت صحیح: <code>/renameorder 12 new_name</code>")
+        return
+    try:
+        available = await _client_name_available(app, parts[2])
+    except XUIError:
+        logger.exception("Could not check replacement client name")
+        await message.answer("بررسی نام موقتاً ممکن نیست؛ بعداً دوباره تلاش کن.")
+        return
+    if not available:
+        await message.answer("این نام قبلاً استفاده شده؛ نام دیگری انتخاب کن.")
+        return
+    order_id = int(parts[1])
+    if not await app.db.rename_failed_buy_order(order_id, parts[2]):
+        await message.answer("سفارش خرید خطادار و بدون سرویس با این شناسه پیدا نشد.")
+        return
+    await message.answer(f"نام سفارش #{order_id} تغییر کرد. حالا <code>/retryorder {order_id}</code> را بزن.")
 
 
 @router.message(Command("retryorder"))

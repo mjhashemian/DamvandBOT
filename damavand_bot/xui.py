@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -9,6 +10,10 @@ from .config import Config
 
 
 class XUIError(RuntimeError):
+    pass
+
+
+class XUINameTakenError(XUIError):
     pass
 
 
@@ -69,6 +74,35 @@ class XUIClient:
             raise XUIError("Client not found")
         return result
 
+    async def client_email_taken(self, email: str) -> bool:
+        """Check both the client lookup and every inbound's stored clients."""
+        try:
+            await self.get_client(email)
+            return True
+        except XUIError as exc:
+            if "not found" not in str(exc).lower():
+                raise
+        rows = await self._request("GET", "/inbounds/list")
+        if not isinstance(rows, list):
+            raise XUIError("3x-ui returned an invalid inbound list")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise XUIError("3x-ui returned an invalid inbound")
+            settings = row.get("settings")
+            if isinstance(settings, str):
+                try:
+                    settings = json.loads(settings)
+                except ValueError as exc:
+                    raise XUIError("3x-ui returned invalid inbound settings") from exc
+            if not isinstance(settings, dict) or not isinstance(settings.get("clients"), list):
+                raise XUIError("3x-ui returned incomplete inbound clients")
+            for client in settings["clients"]:
+                if not isinstance(client, dict):
+                    raise XUIError("3x-ui returned an invalid inbound client")
+                if str(client.get("email", "")).casefold() == email.casefold():
+                    return True
+        return False
+
     async def create_client(
         self,
         *,
@@ -94,7 +128,12 @@ class XUIClient:
             },
             "inboundIds": await self.enabled_inbound_ids(),
         }
-        await self._request("POST", "/clients/add", json=payload)
+        try:
+            await self._request("POST", "/clients/add", json=payload)
+        except XUIError as exc:
+            if "duplicate email" in str(exc).lower():
+                raise XUINameTakenError("این نام سرویس قبلاً استفاده شده است") from exc
+            raise
         return await self.get_client(email)
 
     async def renew_client(self, email: str, traffic_bytes: int, duration_days: int) -> dict:
