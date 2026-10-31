@@ -556,7 +556,7 @@ async def buttons(request: web.Request):
     data = read_config()
     english = {
         "buy": "Buy service", "renew": "Renew service", "services": "My services",
-        "wallet": "Wallet and referrals", "trial": "Trial service", "support": "Support", "channel": "Channel",
+        "wallet": "Wallet and referrals", "referral": "My referral link", "trial": "Trial service", "support": "Support", "channel": "Channel",
     }
     fields = []
     for name, persian in MENU_BUTTONS:

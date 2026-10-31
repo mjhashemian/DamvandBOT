@@ -5,10 +5,10 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from damavand_bot.app import App, _client_name_available, _finish_discount, _provision_order, _send_credentials, buy, pre_checkout, start
+from damavand_bot.app import App, _client_name_available, _finish_discount, _provision_order, _send_credentials, _send_referral_banner, buy, pre_checkout, start
 from damavand_bot.config import Config
 from damavand_bot.db import Database
-from damavand_bot.keyboards import CHANNEL, main_menu
+from damavand_bot.keyboards import CHANNEL, REFERRAL, main_menu
 from damavand_bot.menu import DEFAULT_ENABLED_BUTTONS, MENU_BUTTONS
 from damavand_bot.welcome import DEFAULT_WELCOME_MESSAGE, render_welcome
 from damavand_bot.xui import XUIClient, XUIError, XUINameTakenError
@@ -106,10 +106,24 @@ class MenuButtonTests(IsolatedAsyncioTestCase):
         self.assertFalse(config.button_enabled("buy"))
         self.assertTrue(config.button_enabled("renew"))
 
-    async def test_admin_menu_has_only_the_six_user_buttons(self):
+    async def test_admin_menu_has_all_user_buttons(self):
         labels = [button.text for row in main_menu().keyboard for button in row]
         self.assertEqual([label for _, label in MENU_BUTTONS], labels)
+        self.assertIn(REFERRAL, labels)
         self.assertNotIn("🎟 مدیریت کد تخفیف", labels)
+
+    async def test_referral_banner_contains_personal_link_and_share_button(self):
+        bot = SimpleNamespace(
+            get_me=AsyncMock(return_value=SimpleNamespace(username="examplebot")),
+            send_photo=AsyncMock(), send_message=AsyncMock(),
+        )
+        await _send_referral_banner(SimpleNamespace(bot=bot), 123, 456)
+        kwargs = bot.send_photo.await_args.kwargs
+        self.assertIn("https://t.me/examplebot?start=ref_456", kwargs["caption"])
+        self.assertEqual("https://t.me/examplebot?start=ref_456",
+                         kwargs["reply_markup"].inline_keyboard[0][0].url)
+        self.assertTrue(kwargs["photo"].path.exists())
+        bot.send_message.assert_not_awaited()
 
     async def test_disabled_button_is_hidden_and_old_buy_button_is_blocked(self):
         enabled = DEFAULT_ENABLED_BUTTONS - {"buy"}

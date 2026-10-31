@@ -13,7 +13,7 @@ from .db import Plan
 from .menu import DEFAULT_ENABLED_BUTTONS, MENU_BUTTONS
 
 
-BUY, RENEW, MY_SERVICES, WALLET, TRIAL, SUPPORT, CHANNEL = (label for _, label in MENU_BUTTONS)
+BUY, RENEW, MY_SERVICES, WALLET, REFERRAL, TRIAL, SUPPORT, CHANNEL = (label for _, label in MENU_BUTTONS)
 
 
 def main_menu(enabled_buttons: frozenset[str] = DEFAULT_ENABLED_BUTTONS, channel_enabled: bool = True) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:

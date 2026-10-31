@@ -53,7 +53,7 @@ Then open <http://127.0.0.1:8765> and sign in. The panel shows users and
 orders and edits plans/prices, user- or plan-specific discounts, assigned
 subscription links for existing users, channel ID/join link/support, 3x-ui settings,
 payment method/card details, trial settings, wallet balances, top-ups, referrals, wallet ledger, and versioned Terms. The Bot buttons
-page enables or disables the seven user-facing menu buttons; the admin-only discount
+page enables or disables the eight user-facing menu buttons; the admin-only discount
 button is no longer shown. Disabling a button also blocks its new entry requests,
 while already-started orders can still finish. The sidebar
 provides English and Persian navigation. Settings are grouped into Bot,
@@ -82,7 +82,10 @@ Existing card orders and already paid Stars orders continue through their earlie
 
 The first `/start` creates a wallet with **5,000 toman** for a new Telegram account.
 Existing accounts are migrated with a zero balance. Each user can open **Wallet and referrals**
-or `/wallet` to see their balance and personal `https://t.me/<bot>?start=ref_<telegram_id>` link.
+or `/wallet` to see their balance. The separate **My referral link** button (or
+`/referral`) sends a shareable Damavand banner with their personal
+`https://t.me/<bot>?start=ref_<telegram_id>` link in its caption and a clickable
+link button. The wallet screen also has a button for this banner.
 The referral attaches only when a new account first starts the bot through that link;
 it cannot be reassigned later. The referrer receives **10% of the discounted toman amount**
 after the invited user’s first completed, non-free purchase. Renewals and later purchases

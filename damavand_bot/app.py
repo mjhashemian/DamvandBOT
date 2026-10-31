@@ -34,6 +34,7 @@ from .keyboards import (
     CHANNEL,
     MY_SERVICES,
     WALLET,
+    REFERRAL,
     RENEW,
     SUPPORT,
     TRIAL,
@@ -53,7 +54,7 @@ from .keyboards import (
     wallet_topup_keyboard,
 )
 from .xui import XUIClient, XUIError, XUINameTakenError
-from .welcome import WELCOME_BANNER, render_welcome
+from .welcome import REFERRAL_BANNER, WELCOME_BANNER, render_welcome
 
 
 logger = logging.getLogger(__name__)
@@ -685,9 +686,61 @@ async def show_wallet(message: Message) -> None:
         f"دوستان دعوت‌شده: {invited}\nپاداش‌های دریافت‌شده: <code>{earned:,} تومان</code>\n\n"
         "وقتی دوستت اولین خریدش را با موفقیت انجام دهد، ۱۰٪ مبلغ همان خرید به کیف پولت اضافه می‌شود.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔗 دریافت بنر و لینک دعوت من", callback_data="referral:show")],
             [InlineKeyboardButton(text="➕ شارژ کیف پول", callback_data="wallet:topup")],
         ]),
     )
+
+
+async def _send_referral_banner(app: App, chat_id: int, user_id: int) -> None:
+    bot_name = (await app.bot.get_me()).username
+    if not bot_name:
+        raise RuntimeError("Bot username is unavailable")
+    link = f"https://t.me/{bot_name}?start=ref_{user_id}"
+    caption = (
+        "🌄 <b>دماوند VPN | دعوت دوستان</b>\n\n"
+        "سرویس‌های آی‌پی ثابت برای ترید، برنامه‌نویسی، ابزارهای هوش مصنوعی و وب‌گردی.\n"
+        "کیف پول، پلن‌های متنوع و پشتیبانی در دسترس شماست.\n\n"
+        f"🔗 <b>لینک اختصاصی دعوت شما:</b>\n<code>{html.escape(link)}</code>\n"
+        f"<a href=\"{html.escape(link, quote=True)}\">شروع ربات با لینک دعوت</a>\n\n"
+        "این پیام را برای دوستت بفرست. اگر با لینک تو ربات را شروع کند و اولین خرید پولی‌اش کامل شود، "
+        "۱۰٪ مبلغ همان خرید به کیف پولت اضافه می‌شود."
+    )
+    try:
+        await app.bot.send_photo(
+            chat_id, photo=FSInputFile(REFERRAL_BANNER), caption=caption,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🚀 شروع با لینک دعوت", url=link)],
+            ]),
+        )
+    except (OSError, TelegramAPIError):
+        logger.exception("Referral banner delivery failed for user %s", user_id)
+        await app.bot.send_message(chat_id, caption)
+
+
+@router.message(F.text == REFERRAL)
+@router.message(Command("referral"))
+async def show_referral(message: Message) -> None:
+    app = _app(message)
+    if not app.config.button_enabled("referral"):
+        await message.answer("بخش معرفی دوستان فعلاً غیرفعال است.", reply_markup=app.menu())
+        return
+    if not await app.gate(message):
+        return
+    await _send_referral_banner(app, message.chat.id, message.from_user.id)
+
+
+@router.callback_query(F.data == "referral:show")
+async def show_referral_from_wallet(callback: CallbackQuery) -> None:
+    app = _app(callback)
+    if not app.config.button_enabled("referral"):
+        await callback.answer("بخش معرفی دوستان فعلاً غیرفعال است.", show_alert=True)
+        return
+    if not await app.gate(callback):
+        await callback.answer()
+        return
+    await callback.answer()
+    await _send_referral_banner(app, callback.message.chat.id, callback.from_user.id)
 
 
 @router.callback_query(F.data == "wallet:topup")

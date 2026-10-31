@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 WELCOME_BANNER = Path(__file__).parent / "assets" / "welcome-banner.png"
+REFERRAL_BANNER = Path(__file__).parent / "assets" / "referral-banner.png"
 
 DEFAULT_BOT_DESCRIPTION = (
     "به دماوند VPN خوش اومدی 🌄\n"
